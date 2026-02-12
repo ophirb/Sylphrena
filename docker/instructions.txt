@@ -1,0 +1,9 @@
+make a bash function that I will put in my .zshrc that does the following 
+
+1. navigates to /Users/ophirbenattia/repos/Sylphrena
+2. docker build -f docker/Dockerfile -t sylphrena_bot .
+3. saves somewhere (in a file or wherever you want) an IMAGE_VER which is currently v1.0.1
+4. upon execution - IMAGE_VER is being incremented (v1.0.1 -> v1.0.2)
+5. docker tag sylphrena_bot us-central1-docker.pkg.dev/gen-lang-client-0948887435/sylphrena-repo/sylphrena:IMAGE_VER
+6. docker push us-central1-docker.pkg.dev/gen-lang-client-0948887435/sylphrena-repo/sylphrena:IMAGE_VER
+

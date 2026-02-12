@@ -1,0 +1,14 @@
+# Example variables for Terraform.
+# Copy this file to terraform.tfvars and fill in your actual values.
+# DO NOT commit terraform.tfvars to version control.
+
+gcp_project_id    = "gen-lang-client-0948887435"
+gemini_api_key    = "YOUR_GEMINI_API_KEY"
+notion_token      = "YOUR_NOTION_TOKEN"
+database_id       = "YOUR_NOTION_DATABASE_ID"
+docker_image_tag  = "v1.0.0" # Use a specific version for deployments
+gce_instance_name = "sylphrena-listener-vm"
+gce_zone          = "us-central1-a" # Example zone, adjust as needed
+listener_check_interval_minutes = 60 # Example: 60 minutes
+puppeteer_session_host_path = "/var/lib/sylphrena/puppeteer_session" # Example path
+authorized_groups = "YOUR_WHATSAPP_GROUP_ID@g.us"

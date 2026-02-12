@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  sylphrena:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: sylphrena_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # This maps a local directory named 'puppeteer_session_data' to the
+      # session directory inside the container. This makes your session persist
+      # even if the container is restarted.
+      - ./puppeteer_session_data:/usr/src/app/puppeteer_session

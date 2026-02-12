@@ -2,12 +2,24 @@
 node_modules/
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 
 # Environment variables
 .env
+
+# Local session data
+puppeteer_session_data/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Local output/test files
+files/
+
+# Obsolete config files
 settings.json
 
-
+# Terraform state and secrets
+terraform/.terraform/
+terraform/terraform.tfvars
