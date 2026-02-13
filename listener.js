@@ -64,9 +64,9 @@ whatsapp.on('message_create', async (msg) => {
         return;
     }
 
-    // Skip unauthorized groups
+    // Skip unmonitored groups
     if (!authorizedGroups.includes(trueGroupId)) {
-        console.log(`🚫 [${chatName}] Ignored message from unauthorized group ${trueGroupId}`);
+        console.log(`🚫 [${chatName}] Ignored message from unmonitored group ${trueGroupId}`);
         return;
     }
 

@@ -29,7 +29,7 @@ async function processTask(fullText, chatName) {
                 parent: { database_id: process.env.DATABASE_ID },
                 properties: {
                     'Task': { title: [{ text: { content: data.task } }] },
-                    'Subject': { select: { name: data.subject || chatName } },
+                    'Subject': { select: { name: chatName } },
                     'Due Date': data.due_date ? { date: { start: data.due_date } } : undefined,
                     'Source': { select: { name: 'WhatsApp' } }
                 }

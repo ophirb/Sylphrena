@@ -132,7 +132,7 @@ async function connectWhatsApp() {
         }),
         puppeteer: {
             headless: true,
-            protocolTimeout: 120_000,
+            protocolTimeout: 300_000,
             args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
         }
     });
