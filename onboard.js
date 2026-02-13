@@ -549,6 +549,18 @@ async function signOut() {
             console.log('  No local session found.');
         }
 
+        // Clear authorized groups from Secret Manager
+        console.log('Clearing authorized groups...');
+        try {
+            execSync(
+                `gcloud secrets versions add ${SECRET_NAME} --data-file=- --project=${projectId}`,
+                { input: '', encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+            );
+            console.log('  Authorized groups cleared.');
+        } catch (err) {
+            console.error('  Failed to clear authorized groups:', err.message);
+        }
+
         // Clear VM session
         console.log('Clearing VM session...');
         try {
@@ -561,7 +573,7 @@ async function signOut() {
             console.error('  Failed to clear VM session:', err.message);
         }
 
-        console.log('\nBoth sessions have been signed out.');
+        console.log('\nFull sign-out complete (sessions + authorized groups).');
         console.log('To set up a new user:');
         console.log('  1. npm run scan     — scan QR with the new WhatsApp account (VM bot)');
         console.log('  2. npm run onboard  — scan QR again to manage groups (local tool)\n');
