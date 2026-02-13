@@ -30,7 +30,7 @@ variable "gce_instance_name" {
 variable "listener_check_interval_minutes" {
   description = "The interval in minutes for the listener to check for new messages and trigger the processor."
   type        = number
-  default     = 60 # Default to 60 minutes (1 hour)
+  default     = 10
 }
 
 variable "puppeteer_session_host_path" {

@@ -9,12 +9,14 @@ const notion = new NotionClient({ auth: process.env.NOTION_TOKEN });
 async function processTask(fullText, chatName) {
     try {
         console.log(`🤖 Analyzing aggregated content from "${chatName}"...`);
+        const today = new Date().toISOString().split('T')[0];
+        const dayOfWeek = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
         const prompt = `You are an educational assistant. Analyze the following WhatsApp messages from a school group named "${chatName}".
-                        Context: Use the group name to infer the subject.
+                        Today is ${dayOfWeek}, ${today}.
                         Content: "${fullText}"
-                        
+
                         If these messages describe a school task, homework, or test, extract the details into this JSON format:
-                        {"is_homework": true, "subject": "the subject in Hebrew", "task": "short task description in Hebrew", "due_date": "YYYY-MM-DD or null if not mentioned"}.
+                        {"is_homework": true, "task": "task description in Hebrew including the due date if mentioned", "due_date": "YYYY-MM-DD or null if not mentioned"}.
                         If it is NOT a task, return: {"is_homework": false}.
                         Return ONLY the raw JSON string.`;
 

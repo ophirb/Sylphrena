@@ -72,6 +72,8 @@ docker pull ${IMAGE_TAG}
 
 echo "Saving env vars from running container..."
 docker inspect ${VM_NAME} --format '{{range .Config.Env}}{{println .}}{{end}}' > /tmp/syl_env
+# Remove CHECK_INTERVAL_MS so the image default takes effect
+sed -i '/^CHECK_INTERVAL_MS=/d' /tmp/syl_env
 
 echo "Stopping old container..."
 docker stop ${VM_NAME} || true
