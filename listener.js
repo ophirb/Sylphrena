@@ -48,6 +48,8 @@ whatsapp.on('qr', qr => {
 
 whatsapp.on('ready', () => {
     console.log('🛡️ Sylphrena Listener is ready.');
+    console.log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
+    setInterval(triggerProcessor, CHECK_INTERVAL);
 });
 
 whatsapp.on('message_create', async (msg) => {
@@ -157,5 +159,3 @@ async function triggerProcessor() {
 
 // --- Initialization ---
 whatsapp.initialize();
-console.log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
-setInterval(triggerProcessor, CHECK_INTERVAL);

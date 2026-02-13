@@ -105,7 +105,7 @@ function checkPrereqs() {
 function fetchExistingGroups(projectId) {
     try {
         const raw = runGcloud(`gcloud secrets versions access latest --secret=${SECRET_NAME} --project=${projectId}`);
-        const groups = new Set(raw.split(',').filter(Boolean));
+        const groups = new Set(raw.split(',').map(s => s.trim()).filter(s => s && s !== 'NONE'));
         if (groups.size > 0) {
             console.log(`Currently authorized groups (${groups.size}):`);
             for (const id of groups) {
@@ -554,7 +554,7 @@ async function signOut() {
         try {
             execSync(
                 `gcloud secrets versions add ${SECRET_NAME} --data-file=- --project=${projectId}`,
-                { input: '', encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+                { input: 'NONE', encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
             );
             console.log('  Authorized groups cleared.');
         } catch (err) {
