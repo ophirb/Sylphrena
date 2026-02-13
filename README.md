@@ -94,60 +94,132 @@ Before you begin, ensure you have the following tools installed and configured:
     ```
     Fill in the required secret values in `terraform/terraform.tfvars`.
 
-## Onboarding a New User/Group
+## CLI Management Tools
 
-Onboarding a new user involves authorizing their WhatsApp group so the listener can capture messages from it. This is done by adding the group's unique ID to a secure list.
+Sylphrena includes local CLI tools for managing the bot without needing to SSH into the VM or manually edit secrets. All commands require `gcloud` CLI installed and authenticated.
 
-**The Challenge: Finding the Group ID**
+**Prerequisites for all commands:**
+*   `gcloud` CLI installed and authenticated (`gcloud auth login`)
+*   GCP project configured (`gcloud config set project <PROJECT_ID>`)
 
-The system is designed for security and privacy, meaning it intentionally ignores any groups that are not on the authorized list. A side effect is that it does not log the ID of new, unknown groups it is added to. Therefore, getting the Group ID for a new group requires a temporary, manual process.
+### Quick Reference
 
-**Prerequisites:**
-*   You must have `gcloud` installed and authenticated with permissions to access Google Secret Manager.
-*   The Sylphrena listener bot must be added to the target WhatsApp group before you begin.
+| Command | Purpose |
+|---------|---------|
+| `npm run onboard` | Add or remove authorized WhatsApp groups |
+| `npm run scan` | Stream VM logs to scan a QR code |
+| `npm run signout` | Sign out the current WhatsApp account on the VM |
 
-**Steps to Onboard:**
+---
 
-1.  **Get the Group ID:**
-    The most reliable way to get the Group ID is to temporarily modify the code to log it.
-    *   **Edit `listener.js`**: Open the `listener.js` file.
-    *   **Add a log statement**: Find the line `const trueGroupId = chat.id._serialized;`. Immediately after it, add the following line:
-        ```javascript
-        console.log(`INFO: Message received from Group ID: ${trueGroupId}`);
-        ```
-    *   **Deploy the change**: Follow the "Updating the Listener (GCE)" steps below to deploy this temporary change. This will involve building and pushing a new tagged image and recreating the VM.
+### `npm run onboard` — Manage Authorized Groups
 
-2.  **Find and Copy the Group ID:**
-    *   After the updated listener is running, send a message in the new WhatsApp group you want to authorize.
-    *   SSH into the `sylphrena-listener-vm` in GCP and view the Docker logs:
-        ```bash
-        sudo docker logs sylphrena-listener
-        ```
-    *   Look for the log line you added: `INFO: Message received from Group ID: ...`. 
-    *   The ID will look something like `1234567890@g.us`. Copy this entire ID.
+Connects to WhatsApp locally to fetch your group list, then lets you add or remove groups from the authorized list in GCP Secret Manager.
 
-3.  **Update the Secret in Secret Manager:**
-    *   The list of authorized groups is a comma-separated string stored in Google Secret Manager.
-    *   First, get the current list of authorized groups:
-        ```bash
-        gcloud secrets versions access latest --secret="authorized-groups"
-        ```
-    *   This will return the current list. Copy it.
-    *   Append your new Group ID to this string, separated by a comma. For example: `id1@g.us,id2@g.us,newly-found-id@g.us`.
-    *   Create a new temporary file (e.g., `new_secrets.txt`) and paste the complete, updated comma-separated list into it.
-    *   Update the secret with the new list:
-        ```bash
-        gcloud secrets versions add authorized-groups --data-file="new_secrets.txt"
-        ```
-    *   Delete the temporary `new_secrets.txt` file.
+**Additional prerequisite:** The bot's WhatsApp account must be added to the target group(s) first.
 
-4.  **Restart the Listener VM:**
-    *   From the GCP Console, navigate to Compute Engine and restart the `sylphrena-listener-vm` instance. 
-    *   The VM's startup script will automatically fetch the newly updated secret, and the bot will now be authorized to listen in the new group.
+**What it does:**
+1.  Checks your `gcloud` authentication and project configuration
+2.  Fetches the currently authorized groups from GCP Secret Manager
+3.  Connects to WhatsApp (you scan a QR code on first run only)
+4.  Opens a searchable group list in your browser (with proper Hebrew support)
+5.  Lets you choose to **(a)dd** groups, **(r)emove** groups, or **(q)uit**
+6.  Updates GCP Secret Manager with your changes
+7.  Optionally restarts the GCE listener VM to pick up the changes
 
-5.  **Cleanup:**
-    *   **Important**: Remove the temporary `console.log` statement from `listener.js`.
-    *   Re-deploy the listener by following the update process again. This keeps the production logs clean and focused on important events.
+**Example — adding groups:**
+```
+What would you like to do? (a)dd groups, (r)emove groups, (q)uit: a
+
+Groups available to add:
+
+    1. (972534567890-1234567890@g.us) Science Class
+    2. (972545678901-9876543210@g.us) English Group
+
+Enter group numbers to add (comma-separated, e.g. 1,3), "all", or "b" to go back: 1,2
+
+Groups to add (2):
+  + (972534567890-1234567890@g.us) Science Class
+  + (972545678901-9876543210@g.us) English Group
+Total authorized after update: 3
+
+Update Secret Manager? (y/n): y
+Secret Manager updated successfully.
+```
+
+**Example — removing groups:**
+```
+What would you like to do? (a)dd groups, (r)emove groups, (q)uit: r
+
+Currently authorized groups:
+
+    1. (972522949046-1533827556@g.us) Math Homework
+    2. (972534567890-1234567890@g.us) Science Class
+
+Enter group numbers to remove (comma-separated, e.g. 1,3), or "b" to go back: 2
+
+Groups to remove (1):
+  - (972534567890-1234567890@g.us) Science Class
+Total authorized after update: 1
+
+Update Secret Manager? (y/n): y
+Secret Manager updated successfully.
+```
+
+**Notes:**
+*   Uses a separate WhatsApp session (`.wwebjs_onboard/`) — never interferes with the production bot.
+*   After the first QR scan, subsequent runs reuse the saved session (no QR needed).
+
+---
+
+### `npm run scan` — Stream VM Logs for QR Code
+
+Streams the listener VM's Docker logs to your terminal so you can scan the WhatsApp QR code. Use this after a deployment or VM restart to authenticate the bot.
+
+**Example:**
+```
+VM name [sylphrena-listener-vm]:
+Zone [us-central1-a]:
+Restart the VM first? (y/n) [n]: n
+
+Streaming VM logs — scan the QR code with WhatsApp.
+
+[QR code appears here]
+
+Listener is ready — disconnecting from logs.
+```
+
+The script auto-exits once it detects "Sylphrena Listener is ready" in the logs.
+
+---
+
+### `npm run signout` — Sign Out WhatsApp Account
+
+Signs out the current WhatsApp account from **both** the local onboard tool and the VM listener. Use this when switching to a different WhatsApp user (e.g., a different family member).
+
+**Example:**
+```
+VM name [sylphrena-listener-vm]:
+Zone [us-central1-a]:
+This will sign out the current WhatsApp account everywhere.
+You will need to scan QR codes with the new account afterward.
+Continue? (y/n): y
+
+Clearing local session...
+  Local session cleared.
+Clearing VM session...
+  VM session cleared and container restarting.
+
+Both sessions have been signed out.
+To set up a new user:
+  1. npm run scan     — scan QR with the new WhatsApp account (VM bot)
+  2. npm run onboard  — scan QR again to manage groups (local tool)
+```
+
+**Typical flow to switch to a new user:**
+1.  `npm run signout` — clear both local and VM sessions
+2.  `npm run scan` — scan QR with the new WhatsApp account to link the VM bot
+3.  `npm run onboard` — scan QR again to manage which groups are authorized
 
 ## Local Development
 
@@ -228,37 +300,15 @@ With the image now available in the registry, you can deploy the rest of your se
     Terraform will detect that the repository already exists and will proceed to create the GCE instance and Cloud Run service. Type `yes` when prompted.
     *(Note: The GCE instance will now use a `startup-script` to install Docker and run your container, replacing the deprecated `gce-container-declaration` method.)*
 
-### Step 5: Verify GCE Instance Startup
+### Step 5: Authenticate WhatsApp
 
-The GCE instance will automatically execute its `startup-script` upon creation or restart. This script installs Docker, pulls your image, and starts the `sylphrena-listener-vm` container.
+After the VM is created, link the bot to your WhatsApp account:
 
-You can monitor the startup process by viewing the serial console output or SSHing into the VM.
+```bash
+npm run scan
+```
 
-1.  **Connect to the VM**:
-    On the Compute Engine instances list, click the **SSH** button next to `sylphrena-listener-vm`.
-
-2.  **Check Docker status and container logs**:
-    Once connected, you can verify Docker is running and check the container logs:
-    ```bash
-    sudo systemctl status docker
-    sudo docker ps -a
-    sudo docker logs -f sylphrena-listener-vm
-    ```
-    Wait for the `🛡️ Sylphrena Listener is ready.` message.
-
-### Step 6: Final WhatsApp Authentication
-
-The final step is to link your running bot to your WhatsApp account.
-1.  **View Logs and Scan QR Code**:
-    In the SSH terminal you opened in the previous step, view the container's logs to find the QR code.
-    ```bash
-    # Find the container ID
-    docker ps
-
-    # Follow the logs (replace <your_container_id>)
-    docker logs -f <your_container_id>
-    ```
-    Scan the QR code printed in the terminal with the WhatsApp app on your phone. Once you see the `🛡️ Sylphrena Listener is ready.` message, the bot is fully deployed.
+This streams the VM's Docker logs to your terminal. Scan the QR code with your WhatsApp app (Linked Devices > Link a Device). The script auto-exits once the bot is ready.
 
 ## Updating the Services
 
@@ -284,7 +334,7 @@ The GCE instance only runs its startup script on creation. To apply an updated D
     ```bash
     terraform apply
     ```
-5.  **Re-authenticate WhatsApp** by following Step 6 of the deployment instructions, as the VM was recreated.
+5.  **Re-authenticate WhatsApp**: Run `npm run scan` to scan the QR code for the new VM.
 
 ## Terraform Management
 

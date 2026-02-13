@@ -13,6 +13,7 @@ npm-debug.log*
 puppeteer_session_data/
 .wwebjs_auth/
 .wwebjs_cache/
+.wwebjs_onboard/
 
 # Local output/test files
 files/

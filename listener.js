@@ -12,6 +12,12 @@ const PROCESSOR_URL = process.env.PROCESSOR_URL; // URL for the Cloud Run proces
 const CHECK_INTERVAL = parseInt(process.env.CHECK_INTERVAL_MS || '60000', 10); // Default to 1 minute
 const PUPPETEER_SESSION_DIR = process.env.PUPPETEER_SESSION_DIR || '/usr/src/app/puppeteer_session';
 
+console.log(`📋 Config: ${authorizedGroups.length} authorized group(s), check interval ${CHECK_INTERVAL / 1000}s`);
+console.log(`📋 Processor URL: ${PROCESSOR_URL}`);
+for (const g of authorizedGroups) {
+    console.log(`   ✅ ${g}`);
+}
+
 if (!authorizedGroups.length) {
   console.warn('⚠️ Warning: No authorized groups configured. Check AUTHORIZED_GROUPS.');
 }
@@ -35,6 +41,8 @@ const whatsapp = new Client({
 });
 
 whatsapp.on('qr', qr => {
+    console.log('\n\n\n\n\n\n\n\n');
+    console.log('Scan this QR code with WhatsApp:\n');
     qrcode.generate(qr, {small: true});
 });
 
@@ -43,25 +51,42 @@ whatsapp.on('ready', () => {
 });
 
 whatsapp.on('message_create', async (msg) => {
-    if (msg.body.startsWith('!')) return;
-
     const chat = await msg.getChat();
     const trueGroupId = chat.id._serialized;
+    const chatName = chat.name || trueGroupId;
+    const sender = msg.author || msg.from || 'unknown';
 
-    if (!authorizedGroups.includes(trueGroupId)) return;
+    // Skip commands
+    if (msg.body.startsWith('!')) {
+        console.log(`⏭️ [${chatName}] Skipped command from ${sender}: "${msg.body.slice(0, 50)}"`);
+        return;
+    }
+
+    // Skip unauthorized groups
+    if (!authorizedGroups.includes(trueGroupId)) {
+        console.log(`🚫 [${chatName}] Ignored message from unauthorized group ${trueGroupId}`);
+        return;
+    }
 
     const content = msg.body || msg.caption || "";
-    if (content.length < 2) return;
+
+    // Skip short messages
+    if (content.length < 2) {
+        console.log(`⏭️ [${chatName}] Skipped short message (${content.length} chars) from ${sender}`);
+        return;
+    }
 
     if (!messageQueues[trueGroupId]) {
         messageQueues[trueGroupId] = {
             messages: [],
-            chatName: chat.name || "קבוצה ללא שם"
+            chatName: chatName
         };
     }
 
     messageQueues[trueGroupId].messages.push(content);
-    console.log(`📥 [${messageQueues[trueGroupId].chatName}] Message captured. Total chats in queue: ${Object.keys(messageQueues).length}`);
+    const preview = content.slice(0, 80).replace(/\n/g, ' ');
+    const queueLen = messageQueues[trueGroupId].messages.length;
+    console.log(`📥 [${chatName}] Message #${queueLen} from ${sender}: "${preview}${content.length > 80 ? '...' : ''}"`);
 });
 
 // --- Task Processor Trigger ---
@@ -109,15 +134,24 @@ async function triggerProcessor() {
         return;
     }
 
-    console.log(`📡 Triggering processor for ${Object.keys(batchToProcess).length} chat(s)...`);
+    const chatNames = Object.keys(batchToProcess);
+    console.log(`📡 Triggering processor for ${chatNames.length} chat(s): ${chatNames.join(', ')}`);
+    for (const name of chatNames) {
+        const text = batchToProcess[name];
+        console.log(`   📤 [${name}] Sending ${text.split('\n').length} message(s), ${text.length} chars`);
+    }
+
     try {
         const token = await getAuthToken();
-        await axios.post(PROCESSOR_URL, batchToProcess, {
+        const response = await axios.post(PROCESSOR_URL, batchToProcess, {
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
         });
-        console.log('✅ Successfully triggered processor.');
+        console.log(`✅ Processor responded: ${response.status} ${response.data}`);
     } catch (error) {
-        console.error('❌ Failed to trigger processor:', error.message);
+        console.error(`❌ Failed to trigger processor: ${error.message}`);
+        if (error.response) {
+            console.error(`   Response: ${error.response.status} ${JSON.stringify(error.response.data)}`);
+        }
     }
 }
 

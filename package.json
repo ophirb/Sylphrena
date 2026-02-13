@@ -2,7 +2,10 @@
   "name": "sylphrena",
   "version": "1.0.0",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "onboard": "node onboard.js",
+    "scan": "node onboard.js scan",
+    "signout": "node onboard.js signout"
   },
   "keywords": [],
   "author": "",
