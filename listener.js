@@ -36,7 +36,14 @@ const whatsapp = new Client({
     }),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+        protocolTimeout: 300_000,
+        args: [
+            '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
+            '--disable-background-networking', '--disable-default-apps', '--disable-extensions',
+            '--disable-sync', '--disable-translate', '--metrics-recording-only',
+            '--no-first-run', '--safebrowsing-disable-auto-update',
+            '--js-flags=--max-old-space-size=256',
+        ],
     }
 });
 
@@ -53,42 +60,45 @@ whatsapp.on('ready', () => {
 });
 
 whatsapp.on('message_create', async (msg) => {
-    const chat = await msg.getChat();
-    const trueGroupId = chat.id._serialized;
-    const chatName = chat.name || trueGroupId;
-    const sender = msg.author || msg.from || 'unknown';
+    try {
+        const chat = await msg.getChat();
+        const trueGroupId = chat.id._serialized;
+        const chatName = chat.name || trueGroupId;
+        const sender = msg.author || msg.from || 'unknown';
 
-    // Skip commands
-    if (msg.body.startsWith('!')) {
-        console.log(`⏭️ [${chatName}] Skipped command from ${sender}: "${msg.body.slice(0, 50)}"`);
-        return;
+        // Skip commands
+        if (msg.body.startsWith('!')) {
+            console.log(`⏭️ [${chatName}] Skipped command from ${sender}: "${msg.body.slice(0, 50)}"`);
+            return;
+        }
+
+        // Skip unmonitored groups
+        if (!authorizedGroups.includes(trueGroupId)) {
+            return;
+        }
+
+        const content = msg.body || msg.caption || "";
+
+        // Skip short messages
+        if (content.length < 2) {
+            console.log(`⏭️ [${chatName}] Skipped short message (${content.length} chars) from ${sender}`);
+            return;
+        }
+
+        if (!messageQueues[trueGroupId]) {
+            messageQueues[trueGroupId] = {
+                messages: [],
+                chatName: chatName
+            };
+        }
+
+        messageQueues[trueGroupId].messages.push(content);
+        const preview = content.slice(0, 80).replace(/\n/g, ' ');
+        const queueLen = messageQueues[trueGroupId].messages.length;
+        console.log(`📥 [${chatName}] Message #${queueLen} from ${sender}: "${preview}${content.length > 80 ? '...' : ''}"`);
+    } catch (err) {
+        console.error(`⚠️ Error handling message: ${err.message}`);
     }
-
-    // Skip unmonitored groups
-    if (!authorizedGroups.includes(trueGroupId)) {
-        console.log(`🚫 [${chatName}] Ignored message from unmonitored group ${trueGroupId}`);
-        return;
-    }
-
-    const content = msg.body || msg.caption || "";
-
-    // Skip short messages
-    if (content.length < 2) {
-        console.log(`⏭️ [${chatName}] Skipped short message (${content.length} chars) from ${sender}`);
-        return;
-    }
-
-    if (!messageQueues[trueGroupId]) {
-        messageQueues[trueGroupId] = {
-            messages: [],
-            chatName: chatName
-        };
-    }
-
-    messageQueues[trueGroupId].messages.push(content);
-    const preview = content.slice(0, 80).replace(/\n/g, ' ');
-    const queueLen = messageQueues[trueGroupId].messages.length;
-    console.log(`📥 [${chatName}] Message #${queueLen} from ${sender}: "${preview}${content.length > 80 ? '...' : ''}"`);
 });
 
 // --- Task Processor Trigger ---
