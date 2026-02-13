@@ -6,7 +6,7 @@ Sylphrena is a WhatsApp bot designed to streamline communication in school-relat
 
 The application is split into two main services to optimize for both cost and functionality:
 
-*   **Listener (Google Compute Engine - GCE)**: A long-running `e2-micro` VM (within the GCP free tier) that runs the `whatsapp-web.js` client. This service maintains a persistent WhatsApp session, captures messages from authorized groups, and batches them for processing.
+*   **Listener (Google Compute Engine - GCE)**: A long-running `e2-micro` VM (within the GCP free tier) that runs the `whatsapp-web.js` client. This service maintains a persistent WhatsApp session, captures messages from authorized groups, aggregates them over a 10-minute window, and sends batched messages to the Processor.
 *   **Processor (Google Cloud Run)**: A serverless, scalable service that receives batched messages from the Listener. It uses the Gemini API to process the text and the Notion API to create database entries. This service only runs when it receives a request, making it highly cost-effective and likely to remain within the GCP free tier.
 
 This decoupled architecture ensures the stateful, long-running WhatsApp connection is handled by a persistent, free VM, while the stateless, intensive processing work is handled by a scalable, on-demand serverless service.
@@ -312,29 +312,34 @@ This streams the VM's Docker logs to your terminal. Scan the QR code with your W
 
 ## Updating the Services
 
-### Updating the Processor (Cloud Run)
+### `deploy_sylphrena` — Deploy Updates
 
-The Cloud Run service is configured to use a versioned Docker image tag (e.g., `v1.0.1`). To update the processor:
-1.  Update the `docker_image_tag` in your `terraform/terraform.tfvars` file to a new version (e.g., `v1.0.2`).
-2.  Build and push the new Docker image with the corresponding tag.
-3.  Run `terraform apply`. Terraform will detect the change in the image tag and deploy a new revision of the Cloud Run service automatically.
+The `deploy_sylphrena` shell function handles the full deployment pipeline. It builds the Docker image, pushes it to Artifact Registry, updates Cloud Run via Terraform, and hot-swaps the container on the GCE VM — all while **preserving the WhatsApp session** (no QR re-scan needed).
 
-### Updating the Listener (GCE)
+**Setup:**
+```bash
+source deploy_sylphrena.sh
+```
+Or add `source /path/to/deploy_sylphrena.sh` to your `~/.zshrc` or `~/.bash_profile`.
 
-The GCE instance only runs its startup script on creation. To apply an updated Docker image, you must force the VM to be recreated.
+**Usage:**
+```bash
+deploy_sylphrena
+```
 
-1.  **Build and Push the new Docker image** with a new version tag (e.g., `v1.0.11`).
-2.  **Update the `docker_image_tag`** in your `terraform/terraform.tfvars` file to match the new version.
-3.  **Taint the GCE instance resource**. This marks the VM for destruction and recreation on the next apply.
-    ```bash
-    cd terraform/
-    terraform taint google_compute_instance.sylphrena_listener_vm
-    ```
-4.  **Apply the changes**. Terraform will now plan to replace the VM. Type `yes` to approve.
-    ```bash
-    terraform apply
-    ```
-5.  **Re-authenticate WhatsApp**: Run `npm run scan` to scan the QR code for the new VM.
+**What it does:**
+1.  Builds the Docker image locally
+2.  Auto-increments the version (stored in `~/.sylphrena_version`)
+3.  Tags and pushes the image to Artifact Registry
+4.  Runs `terraform apply` to update the Cloud Run processor
+5.  SSHs into the GCE VM and hot-swaps the container in-place:
+    - Pulls the new image
+    - Saves environment variables from the running container
+    - Stops and removes the old container
+    - Starts a new container with the same env vars and volume mount
+6.  The WhatsApp session persists on the VM's disk across deploys
+
+After deploying, you can verify the listener is healthy with `npm run scan`.
 
 ## Terraform Management
 
