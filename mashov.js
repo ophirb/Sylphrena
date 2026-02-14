@@ -69,10 +69,9 @@ class MashovClient {
         }
     }
 
-    async getHomework(studentId) {
-        const id = studentId || this.userId;
+    async _authGet(url) {
         try {
-            const res = await axios.get(`${BASE_URL}/students/${id}/homework`, {
+            const res = await axios.get(url, {
                 headers: {
                     'Accept': 'application/json, text/plain, */*',
                     'x-csrf-token': this.csrfToken,
@@ -85,7 +84,7 @@ class MashovClient {
                 log('🏫 Session expired, re-logging in...');
                 this.loggedIn = false;
                 await this.login();
-                const res = await axios.get(`${BASE_URL}/students/${id}/homework`, {
+                const res = await axios.get(url, {
                     headers: {
                         'Accept': 'application/json, text/plain, */*',
                         'x-csrf-token': this.csrfToken,
@@ -97,6 +96,18 @@ class MashovClient {
             throw err;
         }
     }
+
+    async getHomework(studentId) {
+        return this._authGet(`${BASE_URL}/students/${studentId || this.userId}/homework`);
+    }
+
+    async getGroups(studentId) {
+        return this._authGet(`${BASE_URL}/students/${studentId || this.userId}/groups`);
+    }
+
+    async getMoodleAssignments(studentId) {
+        return this._authGet(`${BASE_URL}/students/${studentId || this.userId}/moodle/assignments/grades`);
+    }
 }
 
 function getDedupPath() {
@@ -107,7 +118,9 @@ function getDedupPath() {
 function loadProcessedIds() {
     try {
         const data = fs.readFileSync(getDedupPath(), 'utf8');
-        return new Set(JSON.parse(data).processedIds || []);
+        const raw = JSON.parse(data).processedIds || [];
+        // Migrate old numeric lessonId keys to prefixed format
+        return new Set(raw.map(id => typeof id === 'number' || /^\d+$/.test(id) ? `hw_${id}` : id));
     } catch {
         return new Set();
     }
@@ -156,11 +169,13 @@ async function pollMashov() {
         let newCount = 0;
 
         for (const studentId of studentIds) {
+            // --- Homework ---
             const homework = await persistentClient.getHomework(studentId);
             log(`🏫 Fetched ${homework.length} homework item(s) for student ${studentId}`);
 
             for (const item of homework) {
-                if (processedIds.has(item.lessonId)) continue;
+                const dedupKey = `hw_${item.lessonId}`;
+                if (processedIds.has(dedupKey)) continue;
                 if (!item.homework || item.homework.trim() === '') continue;
 
                 try {
@@ -168,23 +183,50 @@ async function pollMashov() {
                     const isMoodle = /מודל|moodle/i.test(text);
                     const source = isMoodle ? 'Mashov-Moodle' : 'Mashov';
                     const dueDate = item.lessonDate ? item.lessonDate.split('T')[0] : null;
-                    await createNotionTask(
-                        text,
-                        item.subjectName || 'Unknown',
-                        dueDate,
-                        source
-                    );
-                    processedIds.add(item.lessonId);
+                    await createNotionTask(text, item.subjectName || 'Unknown', dueDate, source);
+                    processedIds.add(dedupKey);
                     newCount++;
-                    log(`🏫 ✅ New homework: [${item.subjectName}] "${item.homework.slice(0, 60)}"`);
+                    log(`🏫 ✅ New homework: [${item.subjectName}] "${text.slice(0, 60)}"`);
                 } catch (err) {
                     logErr(`🏫 ❌ Failed to create Notion task for lessonId=${item.lessonId}:`, err.message);
                 }
             }
+
+            // --- Moodle assignments ---
+            try {
+                const [assignments, groups] = await Promise.all([
+                    persistentClient.getMoodleAssignments(studentId),
+                    persistentClient.getGroups(studentId)
+                ]);
+                const subjectMap = {};
+                for (const g of groups) subjectMap[g.groupId] = g.subjectName;
+
+                log(`🏫 Fetched ${assignments.length} Moodle assignment(s) for student ${studentId}`);
+
+                for (const item of assignments) {
+                    const dedupKey = `moodle_${item.itemId}`;
+                    if (processedIds.has(dedupKey)) continue;
+
+                    try {
+                        const subject = subjectMap[item.groupId] || item.groupName || 'Unknown';
+                        const dueDate = item.endTime && item.endTime > 0
+                            ? new Date(item.endTime * 1000).toISOString().split('T')[0]
+                            : null;
+                        await createNotionTask(item.itemName, subject, dueDate, 'Mashov-Moodle');
+                        processedIds.add(dedupKey);
+                        newCount++;
+                        log(`🏫 ✅ New Moodle task: [${subject}] "${item.itemName.slice(0, 60)}"`);
+                    } catch (err) {
+                        logErr(`🏫 ❌ Failed to create Notion task for moodle itemId=${item.itemId}:`, err.message);
+                    }
+                }
+            } catch (err) {
+                logErr(`🏫 ⚠️ Moodle assignments fetch failed for student ${studentId}:`, err.message);
+            }
         }
 
         saveProcessedIds(processedIds);
-        log(`🏫 Mashov polling complete. ${newCount} new homework item(s) added.`);
+        log(`🏫 Mashov polling complete. ${newCount} new item(s) added.`);
     } catch (err) {
         logErr('🏫 ❌ Mashov polling error:', err.message);
         // Reset client on unrecoverable errors so next poll retries login
