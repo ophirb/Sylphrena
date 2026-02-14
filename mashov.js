@@ -1,6 +1,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { createNotionTask } = require('./shared');
 
 const BASE_URL = 'https://web.mashov.info/api';
@@ -8,6 +9,9 @@ const DEDUP_FILENAME = 'mashov_processed.json';
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
 function logErr(...args) { console.error(`[${new Date().toISOString()}]`, ...args); }
+
+// Persistent client instance — reused across polls to avoid repeated logins
+let persistentClient = null;
 
 class MashovClient {
     constructor({ semel, year, username, password }) {
@@ -19,6 +23,9 @@ class MashovClient {
         this.cookies = null;
         this.userId = null;
         this.children = [];
+        this.loggedIn = false;
+        // Stable device ID derived from username — Mashov sees the same "device" every time
+        this.deviceUuid = crypto.createHash('md5').update(`sylphrena-${username}`).digest('hex');
     }
 
     async login() {
@@ -31,7 +38,7 @@ class MashovClient {
             apiVersion: '3.20200528',
             appVersion: '3.20200528',
             appBuild: '3.20200528',
-            deviceUuid: 'chrome',
+            deviceUuid: this.deviceUuid,
             devicePlatform: 'chrome',
             deviceManufacturer: 'win',
             deviceModel: 'desktop',
@@ -43,44 +50,51 @@ class MashovClient {
             }
         });
 
-        // Extract CSRF token from response headers
         this.csrfToken = res.headers['x-csrf-token'];
-
-        // Extract cookies from set-cookie headers
         const setCookies = res.headers['set-cookie'] || [];
         this.cookies = setCookies.map(c => c.split(';')[0]).join('; ');
 
         const data = res.data;
         this.userId = data.credential.userId;
         this.children = data.accessToken?.children || [];
+        this.loggedIn = true;
 
         log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}`);
         return data;
     }
 
-    async getHomework(studentId) {
-        const id = studentId || this.userId;
-        const res = await axios.get(`${BASE_URL}/students/${id}/homework`, {
-            headers: {
-                'Accept': 'application/json, text/plain, */*',
-                'x-csrf-token': this.csrfToken,
-                'Cookie': this.cookies
-            }
-        });
-        return res.data;
+    async ensureLoggedIn() {
+        if (!this.loggedIn) {
+            await this.login();
+        }
     }
 
-    async logout() {
+    async getHomework(studentId) {
+        const id = studentId || this.userId;
         try {
-            await axios.get(`${BASE_URL}/logout`, {
+            const res = await axios.get(`${BASE_URL}/students/${id}/homework`, {
                 headers: {
+                    'Accept': 'application/json, text/plain, */*',
                     'x-csrf-token': this.csrfToken,
                     'Cookie': this.cookies
                 }
             });
+            return res.data;
         } catch (err) {
-            // Logout failures are non-critical
-            logErr('🏫 Mashov logout error (non-critical):', err.message);
+            if (err.response?.status === 401) {
+                log('🏫 Session expired, re-logging in...');
+                this.loggedIn = false;
+                await this.login();
+                const res = await axios.get(`${BASE_URL}/students/${id}/homework`, {
+                    headers: {
+                        'Accept': 'application/json, text/plain, */*',
+                        'x-csrf-token': this.csrfToken,
+                        'Cookie': this.cookies
+                    }
+                });
+                return res.data;
+            }
+            throw err;
         }
     }
 }
@@ -112,36 +126,37 @@ async function pollMashov() {
 
     log('🏫 Mashov polling started...');
 
-    const client = new MashovClient({
-        semel: MASHOV_SCHOOL_SEMEL,
-        year: MASHOV_YEAR,
-        username: MASHOV_USERNAME,
-        password: MASHOV_PASSWORD
-    });
+    // Reuse persistent client — only creates a new one on first call
+    if (!persistentClient) {
+        persistentClient = new MashovClient({
+            semel: MASHOV_SCHOOL_SEMEL,
+            year: MASHOV_YEAR,
+            username: MASHOV_USERNAME,
+            password: MASHOV_PASSWORD
+        });
+    }
 
     try {
-        const loginData = await client.login();
+        await persistentClient.ensureLoggedIn();
         const processedIds = loadProcessedIds();
 
-        // Determine which student IDs to fetch homework for
-        // If MASHOV_CHILD_FILTER is set, only process children whose privateName contains the filter
         const childFilter = process.env.MASHOV_CHILD_FILTER;
         let studentIds;
-        if (client.children.length > 0) {
-            let children = client.children;
+        if (persistentClient.children.length > 0) {
+            let children = persistentClient.children;
             if (childFilter) {
                 children = children.filter(c => c.privateName && c.privateName.includes(childFilter));
-                log(`🏫 Child filter "${childFilter}": matched ${children.length} of ${client.children.length} children`);
+                log(`🏫 Child filter "${childFilter}": matched ${children.length} of ${persistentClient.children.length} children`);
             }
             studentIds = children.map(c => c.childGuid);
         } else {
-            studentIds = [client.userId];
+            studentIds = [persistentClient.userId];
         }
 
         let newCount = 0;
 
         for (const studentId of studentIds) {
-            const homework = await client.getHomework(studentId);
+            const homework = await persistentClient.getHomework(studentId);
             log(`🏫 Fetched ${homework.length} homework item(s) for student ${studentId}`);
 
             for (const item of homework) {
@@ -170,10 +185,10 @@ async function pollMashov() {
 
         saveProcessedIds(processedIds);
         log(`🏫 Mashov polling complete. ${newCount} new homework item(s) added.`);
-
-        await client.logout();
     } catch (err) {
         logErr('🏫 ❌ Mashov polling error:', err.message);
+        // Reset client on unrecoverable errors so next poll retries login
+        persistentClient.loggedIn = false;
     }
 }
 
