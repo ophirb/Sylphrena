@@ -62,3 +62,27 @@ variable "authorized_groups" {
   type        = string
   sensitive   = true
 }
+
+variable "mashov_username" {
+  description = "Mashov parent account username (teudat zehut)."
+  type        = string
+  sensitive   = true
+}
+
+variable "mashov_password" {
+  description = "Mashov account password."
+  type        = string
+  sensitive   = true
+}
+
+variable "mashov_school_semel" {
+  description = "Mashov school ID number."
+  type        = string
+  sensitive   = true
+}
+
+variable "mashov_year" {
+  description = "Mashov academic year (e.g., 2025)."
+  type        = string
+  sensitive   = true
+}

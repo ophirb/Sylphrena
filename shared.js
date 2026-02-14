@@ -27,15 +27,7 @@ async function processTask(fullText, chatName) {
 
         if (data.is_homework) {
             console.log(`📝 Task identified:`, data.task);
-            await notion.pages.create({
-                parent: { database_id: process.env.DATABASE_ID },
-                properties: {
-                    'Task': { title: [{ text: { content: data.task } }] },
-                    'Subject': { select: { name: chatName } },
-                    'Due Date': data.due_date ? { date: { start: data.due_date } } : undefined,
-                    'Source': { select: { name: 'WhatsApp' } }
-                }
-            });
+            await createNotionTask(data.task, chatName, data.due_date, 'WhatsApp');
             console.log('✅ Notion updated successfully.');
         }
     } catch (err) {
@@ -43,4 +35,19 @@ async function processTask(fullText, chatName) {
     }
 }
 
-module.exports = { processTask };
+async function createNotionTask(taskText, subject, dueDate, source) {
+    const properties = {
+        'Task': { title: [{ text: { content: taskText } }] },
+        'Subject': { select: { name: subject } },
+        'Source': { select: { name: source } }
+    };
+    if (dueDate) {
+        properties['Due Date'] = { date: { start: dueDate } };
+    }
+    await notion.pages.create({
+        parent: { database_id: process.env.DATABASE_ID },
+        properties
+    });
+}
+
+module.exports = { processTask, createNotionTask };
