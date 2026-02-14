@@ -4,6 +4,7 @@ const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const { exec } = require('child_process');
 const { pollMashov } = require('./mashov');
+const { setClient: setNotifyClient, sendDailySummary } = require('./notify');
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
 function logErr(...args) { console.error(`[${new Date().toISOString()}]`, ...args); }
@@ -61,6 +62,11 @@ whatsapp.on('ready', () => {
     log('🛡️ Sylphrena Listener is ready.');
     log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
     setInterval(triggerProcessor, CHECK_INTERVAL);
+
+    // Notifications
+    setNotifyClient(whatsapp);
+    setInterval(sendDailySummary, 60 * 60 * 1000); // hourly check
+    log('📲 Daily summary scheduled (hourly check, sends at 16:00 Israel time)');
 
     // Mashov polling (opt-in: only if MASHOV_USERNAME is set)
     const MASHOV_INTERVAL = parseInt(process.env.MASHOV_CHECK_INTERVAL_MS || '1800000', 10);

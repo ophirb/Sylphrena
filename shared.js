@@ -55,4 +55,27 @@ async function createNotionTask(taskText, subject, dueDate, source) {
     });
 }
 
-module.exports = { processTask, createNotionTask };
+async function getUpcomingTasks() {
+    const today = new Date().toISOString().split('T')[0];
+    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const response = await notion.databases.query({
+        database_id: process.env.DATABASE_ID,
+        filter: {
+            and: [
+                { property: 'Due Date', date: { on_or_after: today } },
+                { property: 'Due Date', date: { on_or_before: nextWeek } },
+                { property: 'Done', checkbox: { equals: false } }
+            ]
+        },
+        sorts: [{ property: 'Due Date', direction: 'ascending' }]
+    });
+
+    return response.results.map(page => ({
+        task: page.properties['Task']?.title?.[0]?.text?.content || 'Unknown',
+        subject: page.properties['Subject']?.select?.name || 'Unknown',
+        dueDate: page.properties['Due Date']?.date?.start || null
+    }));
+}
+
+module.exports = { processTask, createNotionTask, getUpcomingTasks };

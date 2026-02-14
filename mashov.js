@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { createNotionTask } = require('./shared');
+const { sendError } = require('./notify');
 
 const BASE_URL = 'https://web.mashov.info/api';
 const DEDUP_FILENAME = 'mashov_processed.json';
@@ -229,6 +230,7 @@ async function pollMashov() {
         log(`🏫 Mashov polling complete. ${newCount} new item(s) added.`);
     } catch (err) {
         logErr('🏫 ❌ Mashov polling error:', err.message);
+        sendError(`Mashov polling failed: ${err.message}`);
         // Reset client on unrecoverable errors so next poll retries login
         persistentClient.loggedIn = false;
     }
