@@ -7,6 +7,7 @@ const { sendError } = require('./notify');
 
 const BASE_URL = 'https://web.mashov.info/api';
 const DEDUP_FILENAME = 'mashov_processed.json';
+const SESSION_FILENAME = 'mashov_session.json';
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
 function logErr(...args) { console.error(`[${new Date().toISOString()}]`, ...args); }
@@ -27,6 +28,40 @@ class MashovClient {
         this.loggedIn = false;
         // Stable device ID derived from username — Mashov sees the same "device" every time
         this.deviceUuid = crypto.createHash('md5').update(`sylphrena-${username}`).digest('hex');
+        this._loadSession();
+    }
+
+    _getSessionPath() {
+        const sessionDir = process.env.PUPPETEER_SESSION_DIR || '/usr/src/app/puppeteer_session';
+        return path.join(sessionDir, SESSION_FILENAME);
+    }
+
+    _loadSession() {
+        try {
+            const data = JSON.parse(fs.readFileSync(this._getSessionPath(), 'utf8'));
+            this.csrfToken = data.csrfToken;
+            this.cookies = data.cookies;
+            this.userId = data.userId;
+            this.children = data.children || [];
+            this.loggedIn = true;
+            log('🏫 Mashov session restored from disk');
+        } catch {
+            // No saved session — will login on first poll
+        }
+    }
+
+    _saveSession() {
+        try {
+            fs.writeFileSync(this._getSessionPath(), JSON.stringify({
+                csrfToken: this.csrfToken,
+                cookies: this.cookies,
+                userId: this.userId,
+                children: this.children
+            }));
+            log('🏫 Mashov session saved to disk');
+        } catch (err) {
+            logErr(`🏫 Failed to save Mashov session: ${err.message}`);
+        }
     }
 
     async login() {
@@ -59,6 +94,7 @@ class MashovClient {
         this.userId = data.credential.userId;
         this.children = data.accessToken?.children || [];
         this.loggedIn = true;
+        this._saveSession();
 
         log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}`);
         return data;
@@ -231,8 +267,10 @@ async function pollMashov() {
     } catch (err) {
         logErr('🏫 ❌ Mashov polling error:', err.message);
         sendError(`Mashov polling failed: ${err.message}`);
-        // Reset client on unrecoverable errors so next poll retries login
-        persistentClient.loggedIn = false;
+        // Only force re-login on auth errors; other errors (network, etc.) can retry with existing session
+        if (err.response?.status === 401 || err.response?.status === 403) {
+            persistentClient.loggedIn = false;
+        }
     }
 }
 

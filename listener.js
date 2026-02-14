@@ -65,8 +65,8 @@ whatsapp.on('ready', () => {
 
     // Notifications
     setNotifyClient(whatsapp);
-    setInterval(sendDailySummary, 60 * 60 * 1000); // hourly check
-    log('📲 Daily summary scheduled (hourly check, sends at 18:00 Israel time)');
+    setInterval(sendDailySummary, 15 * 60 * 1000); // check every 15 min
+    log('📲 Daily summary scheduled (checks every 15 min, sends at 18:00 Israel time)');
 
     // Mashov polling (opt-in: only if MASHOV_USERNAME is set)
     const MASHOV_INTERVAL = parseInt(process.env.MASHOV_CHECK_INTERVAL_MS || '1800000', 10);
