@@ -19,6 +19,8 @@ Determine if these messages contain ANY homework, assignment, test, or school ta
 Be INCLUSIVE — even short messages like "צריך לפתור עמוד 70" or "מבחן ביום שלישי" count as homework.
 If messages in Hebrew mention solving (לפתור), reading (לקרוא), studying (ללמוד), submitting (להגיש), preparing (להכין), or any school work — it IS homework.
 
+IMPORTANT: Dates in Israel are dd/mm/yyyy. For example, "17.1" or "17/1" means January 17th, "5.3" means March 5th. Convert to YYYY-MM-DD for the output.
+
 If homework found, return: {"is_homework": true, "task": "task description in Hebrew including the due date if mentioned", "due_date": "YYYY-MM-DD or null if not mentioned"}
 If NOT homework, return: {"is_homework": false}
 Return ONLY the raw JSON string.`;
