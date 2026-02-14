@@ -47,8 +47,8 @@ async function sendDailySummary() {
     const hour = israelTime.getHours();
     const todayStr = israelTime.toISOString().split('T')[0];
 
-    // Only send at 07:xx Israel time, and only once per day
-    if (hour !== 16) return;
+    // Only send at 18:xx Israel time, and only once per day
+    if (hour !== 18) return;
     if (lastSummarySentDate === todayStr) return;
     lastSummarySentDate = todayStr;
 

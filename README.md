@@ -8,6 +8,8 @@ The application is split into two main services to optimize for both cost and fu
 
 *   **Listener (Google Compute Engine - GCE)**: A long-running `e2-micro` VM (within the GCP free tier) that runs the `whatsapp-web.js` client. This service maintains a persistent WhatsApp session, captures messages from authorized groups, aggregates them over a 10-minute window, and sends batched messages to the Processor.
 *   **Processor (Google Cloud Run)**: A serverless, scalable service that receives batched messages from the Listener. It uses the Gemini API to process the text and the Notion API to create database entries. This service only runs when it receives a request, making it highly cost-effective and likely to remain within the GCP free tier.
+*   **Mashov Integration**: The listener polls the Mashov school portal API on a configurable interval, fetching homework assignments and Moodle tasks for tracked students. New items are deduplicated and sent to Notion automatically.
+*   **WhatsApp Notifications**: The bot sends a daily summary of upcoming tasks (next 7 days, excluding completed) to configured phone numbers at 18:00 Israel time. Error alerts (e.g., Mashov poll failures) are sent to an admin number, throttled to max 1 per hour.
 
 This decoupled architecture ensures the stateful, long-running WhatsApp connection is handled by a persistent, free VM, while the stateless, intensive processing work is handled by a scalable, on-demand serverless service.
 
@@ -17,6 +19,7 @@ This decoupled architecture ensures the stateful, long-running WhatsApp connecti
 graph TD
     subgraph "User Domain"
         User -- "Sends message" --> WhatsAppGroup[/"WhatsApp Group"/]
+        Parents["Parents' Phones"]
     end
 
     subgraph "Google Cloud Platform (GCP)"
@@ -38,14 +41,17 @@ graph TD
         WhatsAppGroup -- "Message" --> ListenerContainer
         ListenerContainer -- "1. Aggregates messages" --> ListenerContainer
         ListenerContainer -- "2. Triggers processor (HTTP POST)" --> CloudRun
-        
+        ListenerContainer -- "3. Polls Mashov API" --> MashovAPI["Mashov API"]
+        ListenerContainer -- "4. Daily summary + error alerts" --> Parents
+
         CloudRun -- "Invokes" --> ProcessorContainer
         ProcessorContainer -- "Processes messages" --> GeminiAPI["Gemini API"]
         ProcessorContainer -- "Saves results" --> NotionAPI["Notion API"]
-        
+        ListenerContainer -- "Creates tasks / queries tasks" --> NotionAPI
+
         SecretManager -- "Provides secrets to" --> GCE_VM
         SecretManager -- "Provides secrets to" --> CloudRun
-        
+
         ArtifactRegistry -- "Provides Docker Image to" --> GCE_VM
         ArtifactRegistry -- "Provides Docker Image to" --> CloudRun
     end
@@ -54,6 +60,7 @@ graph TD
         WhatsAppServer["WhatsApp Servers"]
         GeminiAPI
         NotionAPI
+        MashovAPI
     end
 
     ListenerContainer -- "Connects to" --> WhatsAppServer
@@ -220,6 +227,37 @@ To set up a new user:
 1.  `npm run signout` — clear both local and VM sessions
 2.  `npm run scan` — scan QR with the new WhatsApp account to link the VM bot
 3.  `npm run onboard` — scan QR again to manage which groups are authorized
+
+## Mashov Integration
+
+The listener polls the [Mashov](https://web.mashov.info) school portal to automatically fetch homework and Moodle assignments. Configure via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `MASHOV_USERNAME` | Parent's Mashov username (enables polling when set) |
+| `MASHOV_PASSWORD` | Parent's Mashov password |
+| `MASHOV_SCHOOL_SEMEL` | School identifier number |
+| `MASHOV_YEAR` | School year (e.g., `2025`) |
+| `MASHOV_CHILD_FILTER` | Optional — filter by child's first name |
+| `MASHOV_CHECK_INTERVAL_MS` | Poll interval in ms (default: `1800000` / 30 min) |
+
+New homework and Moodle assignments are deduplicated (tracked in `mashov_processed.json`) and created as Notion tasks with source `Mashov` or `Mashov-Moodle`.
+
+## WhatsApp Notifications
+
+The bot sends notifications via WhatsApp using the existing session (no extra QR scan needed).
+
+### Daily Summary
+- Sent at **18:00 Israel time** (Asia/Jerusalem) to configured phone numbers
+- Lists all incomplete tasks due in the next 7 days, grouped by date
+- If no tasks are upcoming, sends "no upcoming tasks" message instead of skipping
+
+### Error Alerts
+- Sent when Mashov polling fails
+- Throttled to **max 1 per hour** to avoid spam
+- Sent to admin phone number only
+
+Phone numbers and notification settings are configured in `notify.js`.
 
 ## Local Development
 
