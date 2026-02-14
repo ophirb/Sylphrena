@@ -63,6 +63,66 @@ resource "google_secret_manager_secret_version" "authorized_groups_secret_versio
   secret_data = var.authorized_groups
 }
 
+resource "google_secret_manager_secret" "mashov_username_secret" {
+  secret_id = "mashov-username"
+  replication {
+    user_managed {
+      replicas { location = var.gcp_region }
+    }
+  }
+  depends_on = [google_project_service.secretmanager_api]
+}
+
+resource "google_secret_manager_secret_version" "mashov_username_secret_version" {
+  secret      = google_secret_manager_secret.mashov_username_secret.id
+  secret_data = var.mashov_username
+}
+
+resource "google_secret_manager_secret" "mashov_password_secret" {
+  secret_id = "mashov-password"
+  replication {
+    user_managed {
+      replicas { location = var.gcp_region }
+    }
+  }
+  depends_on = [google_project_service.secretmanager_api]
+}
+
+resource "google_secret_manager_secret_version" "mashov_password_secret_version" {
+  secret      = google_secret_manager_secret.mashov_password_secret.id
+  secret_data = var.mashov_password
+}
+
+resource "google_secret_manager_secret" "mashov_school_semel_secret" {
+  secret_id = "mashov-school-semel"
+  replication {
+    user_managed {
+      replicas { location = var.gcp_region }
+    }
+  }
+  depends_on = [google_project_service.secretmanager_api]
+}
+
+resource "google_secret_manager_secret_version" "mashov_school_semel_secret_version" {
+  secret      = google_secret_manager_secret.mashov_school_semel_secret.id
+  secret_data = var.mashov_school_semel
+}
+
+resource "google_secret_manager_secret" "mashov_year_secret" {
+  secret_id = "mashov-year"
+  replication {
+    user_managed {
+      replicas { location = var.gcp_region }
+    }
+  }
+  depends_on = [google_project_service.secretmanager_api]
+}
+
+resource "google_secret_manager_secret_version" "mashov_year_secret_version" {
+  secret      = google_secret_manager_secret.mashov_year_secret.id
+  secret_data = var.mashov_year
+}
+
 
 # --- Cloud Services ---
 
@@ -137,11 +197,11 @@ resource "google_cloud_run_v2_service" "sylphrena_processor" {
 
 # 3. GCE instance for the listener
 resource "google_compute_instance" "sylphrena_listener_vm" {
-  provider     = google
-  name         = var.gce_instance_name
-  machine_type = "e2-micro"
-  zone         = var.gce_zone # Use configurable zone
-  allow_stopping_for_update = true # Allow Terraform to stop the instance to apply changes like service account scope updates
+  provider                  = google
+  name                      = var.gce_instance_name
+  machine_type              = "e2-micro"
+  zone                      = var.gce_zone # Use configurable zone
+  allow_stopping_for_update = true         # Allow Terraform to stop the instance to apply changes like service account scope updates
 
   boot_disk {
     initialize_params {
@@ -159,15 +219,22 @@ resource "google_compute_instance" "sylphrena_listener_vm" {
     # Using startup-script to install Docker and run the container,
     # as gce-container-declaration is deprecated.
     startup-script = templatefile("${path.module}/startup-script.sh", {
-      container_name    = var.gce_instance_name # Use the variable for the container name
-      gcp_project_id    = var.gcp_project_id
-      gar_repo_id       = google_artifact_registry_repository.sylphrena_repo.repository_id
-      processor_url     = google_cloud_run_v2_service.sylphrena_processor.uri
-      docker_image_tag  = var.docker_image_tag # Pass the image tag to the startup script
-      authorized_groups_secret_id = google_secret_manager_secret.authorized_groups_secret.secret_id
-      listener_check_interval_ms = var.listener_check_interval_minutes * 60 * 1000
-      puppeteer_session_host_path = var.puppeteer_session_host_path
-      DOCKER_CONFIG      = "/var/lib/docker-config"
+      container_name                = var.gce_instance_name # Use the variable for the container name
+      gcp_project_id                = var.gcp_project_id
+      gar_repo_id                   = google_artifact_registry_repository.sylphrena_repo.repository_id
+      processor_url                 = google_cloud_run_v2_service.sylphrena_processor.uri
+      docker_image_tag              = var.docker_image_tag # Pass the image tag to the startup script
+      authorized_groups_secret_id   = google_secret_manager_secret.authorized_groups_secret.secret_id
+      listener_check_interval_ms    = var.listener_check_interval_minutes * 60 * 1000
+      puppeteer_session_host_path   = var.puppeteer_session_host_path
+      notion_token_secret_id        = google_secret_manager_secret.notion_token_secret.secret_id
+      database_id_secret_id         = google_secret_manager_secret.database_id_secret.secret_id
+      mashov_username_secret_id     = google_secret_manager_secret.mashov_username_secret.secret_id
+      mashov_password_secret_id     = google_secret_manager_secret.mashov_password_secret.secret_id
+      mashov_school_semel_secret_id = google_secret_manager_secret.mashov_school_semel_secret.secret_id
+      mashov_year_secret_id         = google_secret_manager_secret.mashov_year_secret.secret_id
+      mashov_child_filter           = var.mashov_child_filter
+      DOCKER_CONFIG                 = "/var/lib/docker-config"
     })
   }
 
@@ -178,7 +245,17 @@ resource "google_compute_instance" "sylphrena_listener_vm" {
     ]
   }
 
-  depends_on = [google_project_service.compute_api, google_cloud_run_v2_service.sylphrena_processor, google_secret_manager_secret_iam_member.authorized_groups_secret_accessor]
+  depends_on = [
+    google_project_service.compute_api,
+    google_cloud_run_v2_service.sylphrena_processor,
+    google_secret_manager_secret_iam_member.authorized_groups_secret_accessor,
+    google_secret_manager_secret_iam_member.mashov_username_secret_accessor,
+    google_secret_manager_secret_iam_member.mashov_password_secret_accessor,
+    google_secret_manager_secret_iam_member.mashov_school_semel_secret_accessor,
+    google_secret_manager_secret_iam_member.mashov_year_secret_accessor,
+    google_secret_manager_secret_iam_member.notion_token_secret_accessor,
+    google_secret_manager_secret_iam_member.database_id_secret_accessor
+  ]
 }
 
 # --- IAM Policies ---
@@ -208,6 +285,34 @@ resource "google_secret_manager_secret_iam_member" "database_id_secret_accessor"
 resource "google_secret_manager_secret_iam_member" "authorized_groups_secret_accessor" {
   project   = google_secret_manager_secret.authorized_groups_secret.project
   secret_id = google_secret_manager_secret.authorized_groups_secret.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${data.google_compute_default_service_account.default.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "mashov_username_secret_accessor" {
+  project   = google_secret_manager_secret.mashov_username_secret.project
+  secret_id = google_secret_manager_secret.mashov_username_secret.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${data.google_compute_default_service_account.default.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "mashov_password_secret_accessor" {
+  project   = google_secret_manager_secret.mashov_password_secret.project
+  secret_id = google_secret_manager_secret.mashov_password_secret.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${data.google_compute_default_service_account.default.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "mashov_school_semel_secret_accessor" {
+  project   = google_secret_manager_secret.mashov_school_semel_secret.project
+  secret_id = google_secret_manager_secret.mashov_school_semel_secret.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${data.google_compute_default_service_account.default.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "mashov_year_secret_accessor" {
+  project   = google_secret_manager_secret.mashov_year_secret.project
+  secret_id = google_secret_manager_secret.mashov_year_secret.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${data.google_compute_default_service_account.default.email}"
 }

@@ -33,13 +33,24 @@ echo "Attempting to pull Docker image: $${IMAGE_FULL_PATH}"
 docker pull "$${IMAGE_FULL_PATH}" || { echo "ERROR: Docker image pull failed!"; exit 1; }
 echo "--- STARTUP SCRIPT (COS): Docker image pulled successfully ---"
 
-# Fetch the authorized groups from Secret Manager
+# Fetch secrets from Secret Manager
 echo "--- STARTUP SCRIPT (COS): Fetching secrets from Secret Manager ---"
 ACCESS_TOKEN_JSON=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H "Metadata-Flavor: Google")
 ACCESS_TOKEN=$(echo $ACCESS_TOKEN_JSON | grep -o '"access_token": *"[^"]*"' | cut -d'"' -f4)
-SECRET_VALUE_JSON=$(curl -s "https://secretmanager.googleapis.com/v1/projects/${gcp_project_id}/secrets/${authorized_groups_secret_id}/versions/latest:access" --request "GET" --header "authorization: Bearer $ACCESS_TOKEN" --header "content-type: application/json")
-SECRET_BASE64=$(echo $SECRET_VALUE_JSON | grep -o '"data": *"[^"]*"' | cut -d'"' -f4)
-AUTHORIZED_GROUPS_VAL=$(echo $SECRET_BASE64 | base64 --decode)
+
+fetch_secret() {
+  local SECRET_ID=$1
+  local JSON=$(curl -s "https://secretmanager.googleapis.com/v1/projects/${gcp_project_id}/secrets/$SECRET_ID/versions/latest:access" --request "GET" --header "authorization: Bearer $ACCESS_TOKEN" --header "content-type: application/json")
+  echo $JSON | grep -o '"data": *"[^"]*"' | cut -d'"' -f4 | base64 --decode
+}
+
+AUTHORIZED_GROUPS_VAL=$(fetch_secret "${authorized_groups_secret_id}")
+NOTION_TOKEN_VAL=$(fetch_secret "${notion_token_secret_id}")
+DATABASE_ID_VAL=$(fetch_secret "${database_id_secret_id}")
+MASHOV_USERNAME_VAL=$(fetch_secret "${mashov_username_secret_id}")
+MASHOV_PASSWORD_VAL=$(fetch_secret "${mashov_password_secret_id}")
+MASHOV_SCHOOL_SEMEL_VAL=$(fetch_secret "${mashov_school_semel_secret_id}")
+MASHOV_YEAR_VAL=$(fetch_secret "${mashov_year_secret_id}")
 echo "--- STARTUP SCRIPT (COS): Secrets fetched successfully ---"
 
 # Create persistent volume directory if it doesn't exist
@@ -59,6 +70,13 @@ docker run -d --name "${container_name}" --restart always --log-opt max-size=10m
   -e "AUTHORIZED_GROUPS=$${AUTHORIZED_GROUPS_VAL}" \
   -e "CHECK_INTERVAL_MS=${listener_check_interval_ms}" \
   -e "PUPPETEER_SESSION_DIR=/usr/src/app/puppeteer_session" \
+  -e "NOTION_TOKEN=$${NOTION_TOKEN_VAL}" \
+  -e "DATABASE_ID=$${DATABASE_ID_VAL}" \
+  -e "MASHOV_USERNAME=$${MASHOV_USERNAME_VAL}" \
+  -e "MASHOV_PASSWORD=$${MASHOV_PASSWORD_VAL}" \
+  -e "MASHOV_SCHOOL_SEMEL=$${MASHOV_SCHOOL_SEMEL_VAL}" \
+  -e "MASHOV_YEAR=$${MASHOV_YEAR_VAL}" \
+  -e "MASHOV_CHILD_FILTER=${mashov_child_filter}" \
   -v "${puppeteer_session_host_path}:/usr/src/app/puppeteer_session" \
   "$${IMAGE_FULL_PATH}"
 

@@ -3,6 +3,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const { exec } = require('child_process');
+const { pollMashov } = require('./mashov');
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
 function logErr(...args) { console.error(`[${new Date().toISOString()}]`, ...args); }
@@ -60,6 +61,16 @@ whatsapp.on('ready', () => {
     log('🛡️ Sylphrena Listener is ready.');
     log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
     setInterval(triggerProcessor, CHECK_INTERVAL);
+
+    // Mashov polling (opt-in: only if MASHOV_USERNAME is set)
+    const MASHOV_INTERVAL = parseInt(process.env.MASHOV_CHECK_INTERVAL_MS || '1800000', 10);
+    if (process.env.MASHOV_USERNAME) {
+        log(`🏫 Mashov polling enabled, interval: ${MASHOV_INTERVAL / 1000 / 60} minutes`);
+        pollMashov();
+        setInterval(pollMashov, MASHOV_INTERVAL);
+    } else {
+        log('🏫 Mashov polling disabled (no MASHOV_USERNAME configured)');
+    }
 });
 
 whatsapp.on('message_create', async (msg) => {

@@ -26,3 +26,7 @@ terraform/.terraform/
 terraform/terraform.tfvars
 terraform/*.tfstate
 terraform/*.tfstate.*
+
+# debug
+.tmp
+.tmp/*
