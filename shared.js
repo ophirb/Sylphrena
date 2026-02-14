@@ -11,14 +11,17 @@ async function processTask(fullText, chatName) {
         console.log(`🤖 Analyzing aggregated content from "${chatName}"...`);
         const today = new Date().toISOString().split('T')[0];
         const dayOfWeek = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
-        const prompt = `You are an educational assistant. Analyze the following WhatsApp messages from a school group named "${chatName}".
-                        Today is ${dayOfWeek}, ${today}.
-                        Content: "${fullText}"
+        const prompt = `You are an educational assistant analyzing WhatsApp messages from an Israeli school group named "${chatName}".
+Today is ${dayOfWeek}, ${today}.
+Messages: "${fullText}"
 
-                        If these messages describe a school task, homework, or test, extract the details into this JSON format:
-                        {"is_homework": true, "task": "task description in Hebrew including the due date if mentioned", "due_date": "YYYY-MM-DD or null if not mentioned"}.
-                        If it is NOT a task, return: {"is_homework": false}.
-                        Return ONLY the raw JSON string.`;
+Determine if these messages contain ANY homework, assignment, test, or school task.
+Be INCLUSIVE — even short messages like "צריך לפתור עמוד 70" or "מבחן ביום שלישי" count as homework.
+If messages in Hebrew mention solving (לפתור), reading (לקרוא), studying (ללמוד), submitting (להגיש), preparing (להכין), or any school work — it IS homework.
+
+If homework found, return: {"is_homework": true, "task": "task description in Hebrew including the due date if mentioned", "due_date": "YYYY-MM-DD or null if not mentioned"}
+If NOT homework, return: {"is_homework": false}
+Return ONLY the raw JSON string.`;
 
         const result = await model.generateContent(prompt);
         const response = await result.response;

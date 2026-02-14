@@ -124,9 +124,19 @@ async function pollMashov() {
         const processedIds = loadProcessedIds();
 
         // Determine which student IDs to fetch homework for
-        const studentIds = client.children.length > 0
-            ? client.children.map(c => c.childGuid)
-            : [client.userId];
+        // If MASHOV_CHILD_FILTER is set, only process children whose privateName contains the filter
+        const childFilter = process.env.MASHOV_CHILD_FILTER;
+        let studentIds;
+        if (client.children.length > 0) {
+            let children = client.children;
+            if (childFilter) {
+                children = children.filter(c => c.privateName && c.privateName.includes(childFilter));
+                log(`🏫 Child filter "${childFilter}": matched ${children.length} of ${client.children.length} children`);
+            }
+            studentIds = children.map(c => c.childGuid);
+        } else {
+            studentIds = [client.userId];
+        }
 
         let newCount = 0;
 
@@ -139,11 +149,15 @@ async function pollMashov() {
                 if (!item.homework || item.homework.trim() === '') continue;
 
                 try {
+                    const text = item.homework.trim();
+                    const isMoodle = /מודל|moodle/i.test(text);
+                    const source = isMoodle ? 'Mashov-Moodle' : 'Mashov';
+                    const dueDate = item.lessonDate ? item.lessonDate.split('T')[0] : null;
                     await createNotionTask(
-                        item.homework,
+                        text,
                         item.subjectName || 'Unknown',
-                        item.lessonDate || null,
-                        'Mashov'
+                        dueDate,
+                        source
                     );
                     processedIds.add(item.lessonId);
                     newCount++;

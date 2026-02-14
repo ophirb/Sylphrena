@@ -86,3 +86,9 @@ variable "mashov_year" {
   type        = string
   sensitive   = true
 }
+
+variable "mashov_child_filter" {
+  description = "Filter Mashov children by name (e.g., 'בר'). Empty means all children."
+  type        = string
+  default     = ""
+}

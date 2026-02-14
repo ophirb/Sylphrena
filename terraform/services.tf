@@ -233,6 +233,7 @@ resource "google_compute_instance" "sylphrena_listener_vm" {
       mashov_password_secret_id     = google_secret_manager_secret.mashov_password_secret.secret_id
       mashov_school_semel_secret_id = google_secret_manager_secret.mashov_school_semel_secret.secret_id
       mashov_year_secret_id         = google_secret_manager_secret.mashov_year_secret.secret_id
+      mashov_child_filter           = var.mashov_child_filter
       DOCKER_CONFIG                 = "/var/lib/docker-config"
     })
   }
