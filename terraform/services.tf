@@ -383,14 +383,14 @@ resource "google_monitoring_uptime_check_config" "vm_health" {
   period       = "300s"
 
   http_check {
-    port         = 8080
-    path         = "/health"
+    port           = 8080
+    path           = "/health"
     request_method = "GET"
+  }
 
-    content_matchers {
-      content = "\"status\":\"ok\""
-      matcher = "CONTAINS_STRING"
-    }
+  content_matchers {
+    content = "\"status\":\"ok\""
+    matcher = "CONTAINS_STRING"
   }
 
   monitored_resource {
