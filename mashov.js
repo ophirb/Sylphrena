@@ -23,6 +23,7 @@ class MashovClient {
         this.password = password;
         this.csrfToken = null;
         this.cookies = null;
+        this.authToken = null;
         this.userId = null;
         this.children = [];
         this._loginPromise = null; // mutex: prevents concurrent logins
@@ -41,10 +42,11 @@ class MashovClient {
             const data = JSON.parse(fs.readFileSync(this._getSessionPath(), 'utf8'));
             this.csrfToken = data.csrfToken;
             this.cookies = data.cookies;
+            this.authToken = data.authToken || null;
             this.userId = data.userId;
             this.children = data.children || [];
             this.loggedIn = true;
-            log('🏫 Mashov session restored from disk');
+            log(`🏫 Mashov session restored from disk (jwt=${this.authToken ? 'present' : 'missing'})`);
         } catch {
             // No saved session — will login on first poll
         }
@@ -55,6 +57,7 @@ class MashovClient {
             fs.writeFileSync(this._getSessionPath(), JSON.stringify({
                 csrfToken: this.csrfToken,
                 cookies: this.cookies,
+                authToken: this.authToken,
                 userId: this.userId,
                 children: this.children
             }));
@@ -104,16 +107,17 @@ class MashovClient {
         const setCookies = res.headers['set-cookie'] || [];
         this.cookies = setCookies.map(c => c.split(';')[0]).join('; ');
 
+        // Extract the long-lived JWT for persistent auth
+        const authCookie = setCookies.find(c => c.startsWith('MashovAuthToken='));
+        this.authToken = authCookie ? authCookie.split(';')[0].split('=').slice(1).join('=') : null;
+
         const data = res.data;
         this.userId = data.credential.userId;
         this.children = data.accessToken?.children || [];
         this.loggedIn = true;
         this._saveSession();
 
-        log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}`);
-        log(`🏫 [DEBUG] Login response keys: ${Object.keys(data).join(', ')}`);
-        log(`🏫 [DEBUG] accessToken type: ${typeof data.accessToken}, keys: ${data.accessToken ? Object.keys(data.accessToken).join(', ') : 'N/A'}`);
-        log(`🏫 [DEBUG] Response headers: csrf=${this.csrfToken ? 'present' : 'missing'}, cookies=${this.cookies ? this.cookies.substring(0, 80) + '...' : 'missing'}`);
+        log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}, jwt=${this.authToken ? 'present' : 'missing'}`);
         return data;
     }
 
@@ -127,11 +131,7 @@ class MashovClient {
         if (!this.loggedIn) return;
         try {
             await axios.get(`${BASE_URL}/students/${this.userId}/groups`, {
-                headers: {
-                    'Accept': 'application/json, text/plain, */*',
-                    'x-csrf-token': this.csrfToken,
-                    'Cookie': this.cookies
-                }
+                headers: this._authHeaders()
             });
             log('🏫 Mashov heartbeat OK — session alive');
         } catch (err) {
@@ -144,28 +144,29 @@ class MashovClient {
         }
     }
 
+    _authHeaders() {
+        const headers = { 'Accept': 'application/json, text/plain, */*' };
+        if (this.authToken) {
+            // Use the long-lived JWT — no CSRF needed
+            headers['Cookie'] = `MashovAuthToken=${this.authToken}`;
+        } else {
+            // Fallback to cookie+CSRF session auth
+            headers['x-csrf-token'] = this.csrfToken;
+            headers['Cookie'] = this.cookies;
+        }
+        return headers;
+    }
+
     async _authGet(url) {
         try {
-            const res = await axios.get(url, {
-                headers: {
-                    'Accept': 'application/json, text/plain, */*',
-                    'x-csrf-token': this.csrfToken,
-                    'Cookie': this.cookies
-                }
-            });
+            const res = await axios.get(url, { headers: this._authHeaders() });
             return res.data;
         } catch (err) {
             if (err.response?.status === 401) {
                 log('🏫 Session expired, re-logging in...');
                 this.loggedIn = false;
                 await this.login();
-                const res = await axios.get(url, {
-                    headers: {
-                        'Accept': 'application/json, text/plain, */*',
-                        'x-csrf-token': this.csrfToken,
-                        'Cookie': this.cookies
-                    }
-                });
+                const res = await axios.get(url, { headers: this._authHeaders() });
                 return res.data;
             }
             throw err;
