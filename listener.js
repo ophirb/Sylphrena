@@ -1,9 +1,10 @@
 require('dotenv').config();
+const http = require('http');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const { exec } = require('child_process');
-const { pollMashov, startMashovHeartbeat } = require('./mashov');
+const { pollMashov, startMashovHeartbeat, saveMashovSession } = require('./mashov');
 const { setClient: setNotifyClient, sendDailySummary } = require('./notify');
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
@@ -34,6 +35,13 @@ if (!PROCESSOR_URL) {
 // --- Message Aggregation ---
 const messageQueues = {}; // { [groupId]: { messages: [], chatName: 'name' } }
 
+// --- Health State Tracking ---
+const startedAt = new Date().toISOString();
+let whatsappState = 'initializing';
+let lastProcessorTrigger = null;
+let lastMashovPoll = null;
+let lastDailySummary = null;
+
 // --- WhatsApp Client Setup ---
 const whatsapp = new Client({
     authStrategy: new LocalAuth({
@@ -59,26 +67,37 @@ whatsapp.on('qr', qr => {
 });
 
 whatsapp.on('ready', () => {
+    whatsappState = 'connected';
     log('🛡️ Sylphrena Listener is ready.');
     log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
     setInterval(triggerProcessor, CHECK_INTERVAL);
 
     // Notifications
     setNotifyClient(whatsapp);
-    sendDailySummary(); // check immediately on startup
-    setInterval(sendDailySummary, 15 * 60 * 1000); // then every 15 min
+    async function checkDailySummary() {
+        const sent = await sendDailySummary();
+        if (sent) lastDailySummary = new Date().toISOString();
+    }
+    checkDailySummary(); // check immediately on startup
+    setInterval(checkDailySummary, 15 * 60 * 1000); // then every 15 min
     log('📲 Daily summary scheduled (checks every 15 min, sends at 18:00 Israel time)');
 
     // Mashov polling (opt-in: only if MASHOV_USERNAME is set)
     const MASHOV_INTERVAL = parseInt(process.env.MASHOV_CHECK_INTERVAL_MS || '1800000', 10);
+    const mashovComplete = () => { lastMashovPoll = new Date().toISOString(); };
     if (process.env.MASHOV_USERNAME) {
         log(`🏫 Mashov polling enabled, interval: ${MASHOV_INTERVAL / 1000 / 60} minutes`);
-        pollMashov();
-        setInterval(pollMashov, MASHOV_INTERVAL);
+        pollMashov(mashovComplete);
+        setInterval(() => pollMashov(mashovComplete), MASHOV_INTERVAL);
         startMashovHeartbeat();
     } else {
         log('🏫 Mashov polling disabled (no MASHOV_USERNAME configured)');
     }
+});
+
+whatsapp.on('disconnected', (reason) => {
+    whatsappState = 'disconnected';
+    log(`⚠️ WhatsApp disconnected: ${reason}`);
 });
 
 whatsapp.on('message_create', async (msg) => {
@@ -151,12 +170,15 @@ async function getAuthToken() {
 }
 
 async function triggerProcessor() {
+    // Snapshot queued messages and clear queues
+    const snapshot = {}; // { groupId: { messages: [...], chatName } }
     const batchToProcess = {};
     let hasTasks = false;
 
     for (const groupId in messageQueues) {
         if (messageQueues[groupId].messages.length > 0) {
             const { messages, chatName } = messageQueues[groupId];
+            snapshot[groupId] = { messages: [...messages], chatName };
             batchToProcess[chatName] = messages.join('\n');
             hasTasks = true;
             messageQueues[groupId].messages = []; // Clear the queue
@@ -181,13 +203,73 @@ async function triggerProcessor() {
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
         });
         log(`✅ Processor responded: ${response.status} ${response.data}`);
+        lastProcessorTrigger = new Date().toISOString();
     } catch (error) {
         logErr(`❌ Failed to trigger processor: ${error.message}`);
         if (error.response) {
             logErr(`   Response: ${error.response.status} ${JSON.stringify(error.response.data)}`);
         }
+        // Restore snapshot — prepend to any new messages that arrived during the attempt
+        let restoredCount = 0;
+        for (const groupId in snapshot) {
+            const { messages, chatName } = snapshot[groupId];
+            if (!messageQueues[groupId]) {
+                messageQueues[groupId] = { messages: [], chatName };
+            }
+            messageQueues[groupId].messages = [...messages, ...messageQueues[groupId].messages];
+            restoredCount++;
+        }
+        log(`🔄 Restored ${restoredCount} group queue(s) — will retry next cycle`);
     }
 }
+
+// --- Health Check HTTP Server ---
+const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || '8080', 10);
+
+const healthServer = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/health') {
+        let queueDepth = 0;
+        for (const groupId in messageQueues) {
+            queueDepth += messageQueues[groupId].messages.length;
+        }
+        const body = JSON.stringify({
+            status: whatsappState === 'connected' ? 'ok' : whatsappState,
+            whatsapp: whatsappState,
+            uptime_seconds: Math.floor(process.uptime()),
+            last_processor_trigger: lastProcessorTrigger,
+            last_mashov_poll: lastMashovPoll,
+            last_daily_summary: lastDailySummary,
+            queue_depth: queueDepth,
+            version: process.env.APP_VERSION || 'unknown'
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(body);
+    } else {
+        res.writeHead(404);
+        res.end();
+    }
+});
+
+healthServer.listen(HEALTH_PORT, () => {
+    log(`🩺 Health check listening on port ${HEALTH_PORT}`);
+});
+
+// --- Graceful Shutdown ---
+async function shutdown(signal) {
+    log(`🛑 Received ${signal}, shutting down gracefully...`);
+    whatsappState = 'shutting_down';
+    saveMashovSession();
+    try {
+        await whatsapp.destroy();
+        log('🛑 WhatsApp client destroyed');
+    } catch (err) {
+        logErr(`🛑 Error destroying WhatsApp client: ${err.message}`);
+    }
+    process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // --- Initialization ---
 whatsapp.initialize();

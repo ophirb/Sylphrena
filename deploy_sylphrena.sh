@@ -83,6 +83,8 @@ echo "Starting new container..."
 docker run -d --name ${VM_NAME} --restart always \
   --log-opt max-size=10m --log-opt max-file=3 \
   --env-file /tmp/syl_env \
+  -e "APP_VERSION=${NEW_VER}" \
+  -p 8080:8080 \
   -v /var/lib/sylphrena/puppeteer_session:/usr/src/app/puppeteer_session \
   ${IMAGE_TAG}
 
