@@ -111,6 +111,9 @@ class MashovClient {
         this._saveSession();
 
         log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}`);
+        log(`🏫 [DEBUG] Login response keys: ${Object.keys(data).join(', ')}`);
+        log(`🏫 [DEBUG] accessToken type: ${typeof data.accessToken}, keys: ${data.accessToken ? Object.keys(data.accessToken).join(', ') : 'N/A'}`);
+        log(`🏫 [DEBUG] Response headers: csrf=${this.csrfToken ? 'present' : 'missing'}, cookies=${this.cookies ? this.cookies.substring(0, 80) + '...' : 'missing'}`);
         return data;
     }
 
