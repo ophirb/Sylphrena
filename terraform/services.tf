@@ -358,6 +358,6 @@ resource "google_compute_firewall" "health_check" {
     ports    = ["8080"]
   }
 
-  source_ranges = [var.health_check_allowed_ip]
+  source_ranges = ["0.0.0.0/0"]
   target_tags   = ["sylphrena-health"]
 }
