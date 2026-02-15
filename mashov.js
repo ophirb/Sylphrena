@@ -107,9 +107,24 @@ class MashovClient {
         const setCookies = res.headers['set-cookie'] || [];
         this.cookies = setCookies.map(c => c.split(';')[0]).join('; ');
 
+        // Debug: log full cookie details (expiry, path, etc.) and response keys
+        log(`🏫 [DEBUG] Response headers set-cookie:`);
+        for (const c of setCookies) log(`🏫 [DEBUG]   ${c}`);
+        log(`🏫 [DEBUG] Response body keys: ${Object.keys(res.data).join(', ')}`);
+        log(`🏫 [DEBUG] accessToken keys: ${res.data.accessToken ? Object.keys(res.data.accessToken).join(', ') : 'N/A'}`);
+        log(`🏫 [DEBUG] credential keys: ${res.data.credential ? Object.keys(res.data.credential).join(', ') : 'N/A'}`);
+
         // Extract the long-lived JWT for persistent auth
         const authCookie = setCookies.find(c => c.startsWith('MashovAuthToken='));
         this.authToken = authCookie ? authCookie.split(';')[0].split('=').slice(1).join('=') : null;
+
+        // Debug: decode JWT payload to check expiry
+        if (this.authToken) {
+            try {
+                const payload = JSON.parse(Buffer.from(this.authToken.split('.')[1], 'base64').toString());
+                log(`🏫 [DEBUG] JWT payload: iat=${payload.iat}, exp=${payload.exp}, exp_date=${payload.exp ? new Date(payload.exp * 1000).toISOString() : 'N/A'}`);
+            } catch (e) { log(`🏫 [DEBUG] JWT decode failed: ${e.message}`); }
+        }
 
         const data = res.data;
         this.userId = data.credential.userId;
@@ -308,6 +323,7 @@ async function pollMashov(onComplete) {
                 }
             } catch (err) {
                 logErr(`🏫 ⚠️ Moodle assignments fetch failed for student ${studentId}:`, err.message);
+                sendError(`Moodle assignments fetch failed: ${err.message}`);
             }
         }
 

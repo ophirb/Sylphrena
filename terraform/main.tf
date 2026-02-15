@@ -32,3 +32,7 @@ resource "google_project_service" "iam_api" {
 resource "google_project_service" "secretmanager_api" {
   service = "secretmanager.googleapis.com"
 }
+
+resource "google_project_service" "monitoring_api" {
+  service = "monitoring.googleapis.com"
+}

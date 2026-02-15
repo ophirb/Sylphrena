@@ -361,3 +361,83 @@ resource "google_compute_firewall" "health_check" {
   source_ranges = ["0.0.0.0/0"]
   target_tags   = ["sylphrena-health"]
 }
+
+# --- Cloud Monitoring ---
+
+# Email notification channel for uptime check alerts
+resource "google_monitoring_notification_channel" "email" {
+  display_name = "Sylphrena Alert Email"
+  type         = "email"
+
+  labels = {
+    email_address = "ophirb@gmail.com"
+  }
+
+  depends_on = [google_project_service.monitoring_api]
+}
+
+# Uptime check: hit /health every 5 minutes and verify response contains "status":"ok"
+resource "google_monitoring_uptime_check_config" "vm_health" {
+  display_name = "Sylphrena VM Health Check"
+  timeout      = "10s"
+  period       = "300s"
+
+  http_check {
+    port         = 8080
+    path         = "/health"
+    request_method = "GET"
+
+    content_matchers {
+      content = "\"status\":\"ok\""
+      matcher = "CONTAINS_STRING"
+    }
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.gcp_project_id
+      host       = google_compute_instance.sylphrena_listener_vm.network_interface[0].access_config[0].nat_ip
+    }
+  }
+
+  depends_on = [google_project_service.monitoring_api]
+}
+
+# Alert policy: fire when the uptime check fails
+resource "google_monitoring_alert_policy" "uptime_alert" {
+  display_name = "Sylphrena VM Down"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Health check failure"
+
+    condition_threshold {
+      filter          = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id = \"${google_monitoring_uptime_check_config.vm_health.uptime_check_id}\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 1
+      duration        = "300s"
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_NEXT_OLDER"
+        cross_series_reducer = "REDUCE_COUNT_FALSE"
+        group_by_fields      = ["resource.label.project_id", "resource.label.host"]
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [
+    google_monitoring_notification_channel.email.name
+  ]
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  depends_on = [google_project_service.monitoring_api]
+}

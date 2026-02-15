@@ -5,7 +5,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "onboard": "node onboard.js",
     "scan": "node onboard.js scan",
-    "signout": "node onboard.js signout"
+    "signout": "node onboard.js signout",
+    "health": "gcloud compute instances describe sylphrena-listener-vm --zone=us-central1-a --project=gen-lang-client-0948887435 --format='get(networkInterfaces[0].accessConfigs[0].natIP)' | xargs -I{} curl -s http://{}:8080/health | python3 -m json.tool"
   },
   "keywords": [],
   "author": "",
