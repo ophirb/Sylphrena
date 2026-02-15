@@ -145,9 +145,10 @@ class MashovClient {
     async heartbeat() {
         if (!this.loggedIn) return;
         try {
-            await axios.get(`${BASE_URL}/students/${this.userId}/groups`, {
+            const res = await axios.get(`${BASE_URL}/students/${this.userId}/groups`, {
                 headers: this._authHeaders()
             });
+            this._updateCookiesFromResponse(res);
             log('🏫 Mashov heartbeat OK — session alive');
         } catch (err) {
             if (err.response?.status === 401) {
@@ -167,9 +168,47 @@ class MashovClient {
         return headers;
     }
 
+    // Capture refreshed cookies from API responses (like a phone app's cookie jar)
+    _updateCookiesFromResponse(res) {
+        const setCookies = res.headers['set-cookie'];
+        if (!setCookies || setCookies.length === 0) return;
+
+        // Merge new cookie values into existing cookies
+        const cookieMap = {};
+        for (const c of (this.cookies || '').split('; ').filter(Boolean)) {
+            const [key] = c.split('=');
+            cookieMap[key] = c;
+        }
+        for (const c of setCookies) {
+            const value = c.split(';')[0];
+            const [key] = value.split('=');
+            cookieMap[key] = value;
+        }
+        this.cookies = Object.values(cookieMap).join('; ');
+
+        // Update JWT if refreshed
+        const authCookie = setCookies.find(c => c.startsWith('MashovAuthToken='));
+        if (authCookie) {
+            const newToken = authCookie.split(';')[0].split('=').slice(1).join('=');
+            if (newToken !== this.authToken) {
+                this.authToken = newToken;
+                log('🏫 JWT refreshed from API response');
+                this._saveSession();
+            }
+        }
+
+        // Update CSRF token if refreshed
+        const csrfCookie = setCookies.find(c => c.startsWith('Csrf-Token='));
+        if (csrfCookie) {
+            const newCsrf = csrfCookie.split(';')[0].split('=').slice(1).join('=');
+            if (newCsrf !== this.csrfToken) this.csrfToken = newCsrf;
+        }
+    }
+
     async _authGet(url) {
         try {
             const res = await axios.get(url, { headers: this._authHeaders() });
+            this._updateCookiesFromResponse(res);
             return res.data;
         } catch (err) {
             if (err.response?.status === 401 && this.authToken) {
@@ -182,6 +221,7 @@ class MashovClient {
                             'Cookie': `MashovAuthToken=${this.authToken}`
                         }
                     });
+                    this._updateCookiesFromResponse(res);
                     return res.data;
                 } catch (jwtErr) {
                     log('🏫 JWT retry failed, doing full login...');
@@ -191,6 +231,7 @@ class MashovClient {
                 this.loggedIn = false;
                 await this.login();
                 const res = await axios.get(url, { headers: this._authHeaders() });
+                this._updateCookiesFromResponse(res);
                 return res.data;
             }
             throw err;
