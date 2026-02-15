@@ -215,7 +215,7 @@ function saveProcessedIds(ids) {
     fs.writeFileSync(getDedupPath(), JSON.stringify({ processedIds: [...ids] }));
 }
 
-async function pollMashov() {
+async function pollMashov(onComplete) {
     const { MASHOV_USERNAME, MASHOV_PASSWORD, MASHOV_SCHOOL_SEMEL, MASHOV_YEAR } = process.env;
     if (!MASHOV_USERNAME || !MASHOV_PASSWORD || !MASHOV_SCHOOL_SEMEL || !MASHOV_YEAR) {
         logErr('🏫 Mashov polling skipped: missing credentials');
@@ -239,21 +239,24 @@ async function pollMashov() {
         const processedIds = loadProcessedIds();
 
         const childFilter = process.env.MASHOV_CHILD_FILTER;
-        let studentIds;
+        let students; // [{ id, name }]
         if (persistentClient.children.length > 0) {
             let children = persistentClient.children;
             if (childFilter) {
                 children = children.filter(c => c.privateName && c.privateName.includes(childFilter));
                 log(`🏫 Child filter "${childFilter}": matched ${children.length} of ${persistentClient.children.length} children`);
             }
-            studentIds = children.map(c => c.childGuid);
+            students = children.map(c => ({ id: c.childGuid, name: c.privateName || '' }));
         } else {
-            studentIds = [persistentClient.userId];
+            students = [{ id: persistentClient.userId, name: '' }];
         }
 
+        const multiChild = students.length > 1;
         let newCount = 0;
 
-        for (const studentId of studentIds) {
+        for (const student of students) {
+            const studentId = student.id;
+            const namePrefix = multiChild && student.name ? `[${student.name}] ` : '';
             // --- Homework ---
             const homework = await persistentClient.getHomework(studentId);
             log(`🏫 Fetched ${homework.length} homework item(s) for student ${studentId}`);
@@ -268,7 +271,7 @@ async function pollMashov() {
                     const isMoodle = /מודל|moodle/i.test(text);
                     const source = isMoodle ? 'Mashov-Moodle' : 'Mashov';
                     const dueDate = item.lessonDate ? item.lessonDate.split('T')[0] : null;
-                    await createNotionTask(text, item.subjectName || 'Unknown', dueDate, source);
+                    await createNotionTask(namePrefix + text, item.subjectName || 'Unknown', dueDate, source);
                     processedIds.add(dedupKey);
                     newCount++;
                     log(`🏫 ✅ New homework: [${item.subjectName}] "${text.slice(0, 60)}"`);
@@ -295,7 +298,7 @@ async function pollMashov() {
                         const dueDate = item.endTime && item.endTime > 0
                             ? new Date(item.endTime * 1000).toISOString().split('T')[0]
                             : null;
-                        await createNotionTask(item.itemName, subject, dueDate, 'Mashov-Moodle');
+                        await createNotionTask(namePrefix + item.itemName, subject, dueDate, 'Mashov-Moodle');
                         processedIds.add(dedupKey);
                         newCount++;
                         log(`🏫 ✅ New Moodle task: [${subject}] "${item.itemName.slice(0, 60)}"`);
@@ -310,6 +313,7 @@ async function pollMashov() {
 
         saveProcessedIds(processedIds);
         log(`🏫 Mashov polling complete. ${newCount} new item(s) added.`);
+        if (onComplete) onComplete();
     } catch (err) {
         logErr('🏫 ❌ Mashov polling error:', err.message);
         sendError(`Mashov polling failed: ${err.message}`);
@@ -329,4 +333,8 @@ function startMashovHeartbeat() {
     log(`🏫 Mashov heartbeat started (every ${HEARTBEAT_INTERVAL / 1000 / 60} min)`);
 }
 
-module.exports = { pollMashov, startMashovHeartbeat };
+function saveMashovSession() {
+    if (persistentClient) persistentClient._saveSession();
+}
+
+module.exports = { pollMashov, startMashovHeartbeat, saveMashovSession };

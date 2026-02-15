@@ -94,8 +94,10 @@ async function sendDailySummary() {
             await sendWhatsApp(number, text);
         }
         log('📲 Daily summary sent successfully');
+        return true;
     } catch (err) {
         logErr(`📲 Failed to send daily summary: ${err.message}`);
+        return false;
     }
 }
 
