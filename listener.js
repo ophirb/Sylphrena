@@ -3,7 +3,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const { exec } = require('child_process');
-const { pollMashov } = require('./mashov');
+const { pollMashov, startMashovHeartbeat } = require('./mashov');
 const { setClient: setNotifyClient, sendDailySummary } = require('./notify');
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
@@ -74,6 +74,7 @@ whatsapp.on('ready', () => {
         log(`🏫 Mashov polling enabled, interval: ${MASHOV_INTERVAL / 1000 / 60} minutes`);
         pollMashov();
         setInterval(pollMashov, MASHOV_INTERVAL);
+        startMashovHeartbeat();
     } else {
         log('🏫 Mashov polling disabled (no MASHOV_USERNAME configured)');
     }

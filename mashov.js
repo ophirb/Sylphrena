@@ -120,6 +120,27 @@ class MashovClient {
         }
     }
 
+    async heartbeat() {
+        if (!this.loggedIn) return;
+        try {
+            await axios.get(`${BASE_URL}/students/${this.userId}/groups`, {
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'x-csrf-token': this.csrfToken,
+                    'Cookie': this.cookies
+                }
+            });
+            log('🏫 Mashov heartbeat OK — session alive');
+        } catch (err) {
+            if (err.response?.status === 401) {
+                log('🏫 Heartbeat: session expired, will re-login on next poll');
+                this.loggedIn = false;
+            } else {
+                logErr(`🏫 Heartbeat failed: ${err.message}`);
+            }
+        }
+    }
+
     async _authGet(url) {
         try {
             const res = await axios.get(url, {
@@ -286,4 +307,13 @@ async function pollMashov() {
     }
 }
 
-module.exports = { pollMashov };
+function startMashovHeartbeat() {
+    // Ping Mashov every 10 min to keep the session alive between 30-min polls
+    const HEARTBEAT_INTERVAL = 10 * 60 * 1000;
+    setInterval(() => {
+        if (persistentClient) persistentClient.heartbeat();
+    }, HEARTBEAT_INTERVAL);
+    log(`🏫 Mashov heartbeat started (every ${HEARTBEAT_INTERVAL / 1000 / 60} min)`);
+}
+
+module.exports = { pollMashov, startMashovHeartbeat };
