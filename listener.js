@@ -65,7 +65,8 @@ whatsapp.on('ready', () => {
 
     // Notifications
     setNotifyClient(whatsapp);
-    setInterval(sendDailySummary, 15 * 60 * 1000); // check every 15 min
+    sendDailySummary(); // check immediately on startup
+    setInterval(sendDailySummary, 15 * 60 * 1000); // then every 15 min
     log('📲 Daily summary scheduled (checks every 15 min, sends at 18:00 Israel time)');
 
     // Mashov polling (opt-in: only if MASHOV_USERNAME is set)
