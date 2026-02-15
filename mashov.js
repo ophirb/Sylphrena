@@ -146,14 +146,9 @@ class MashovClient {
 
     _authHeaders() {
         const headers = { 'Accept': 'application/json, text/plain, */*' };
-        if (this.authToken) {
-            // Use the long-lived JWT — no CSRF needed
-            headers['Cookie'] = `MashovAuthToken=${this.authToken}`;
-        } else {
-            // Fallback to cookie+CSRF session auth
-            headers['x-csrf-token'] = this.csrfToken;
-            headers['Cookie'] = this.cookies;
-        }
+        if (this.csrfToken) headers['x-csrf-token'] = this.csrfToken;
+        // Use full cookies when available (fresh login), JWT-only as fallback (restored session)
+        headers['Cookie'] = this.cookies || (this.authToken ? `MashovAuthToken=${this.authToken}` : '');
         return headers;
     }
 
@@ -162,8 +157,22 @@ class MashovClient {
             const res = await axios.get(url, { headers: this._authHeaders() });
             return res.data;
         } catch (err) {
+            if (err.response?.status === 401 && this.authToken) {
+                // Session cookies expired — try JWT-only before doing a full login
+                log('🏫 Session expired, retrying with JWT...');
+                try {
+                    const res = await axios.get(url, {
+                        headers: {
+                            'Accept': 'application/json, text/plain, */*',
+                            'Cookie': `MashovAuthToken=${this.authToken}`
+                        }
+                    });
+                    return res.data;
+                } catch (jwtErr) {
+                    log('🏫 JWT retry failed, doing full login...');
+                }
+            }
             if (err.response?.status === 401) {
-                log('🏫 Session expired, re-logging in...');
                 this.loggedIn = false;
                 await this.login();
                 const res = await axios.get(url, { headers: this._authHeaders() });
