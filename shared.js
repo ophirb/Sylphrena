@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { Client: NotionClient } = require("@notionhq/client");
+const axios = require('axios');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
@@ -59,19 +60,29 @@ async function getUpcomingTasks() {
     const today = new Date().toISOString().split('T')[0];
     const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const response = await notion.databases.query({
-        database_id: process.env.DATABASE_ID,
-        filter: {
-            and: [
-                { property: 'Due Date', date: { on_or_after: today } },
-                { property: 'Due Date', date: { on_or_before: nextWeek } },
-                { property: 'Done', checkbox: { equals: false } }
-            ]
+    // Direct API call — databases.query not available in @notionhq/client v5
+    const response = await axios.post(
+        `https://api.notion.com/v1/databases/${process.env.DATABASE_ID}/query`,
+        {
+            filter: {
+                and: [
+                    { property: 'Due Date', date: { on_or_after: today } },
+                    { property: 'Due Date', date: { on_or_before: nextWeek } },
+                    { property: 'Done', checkbox: { equals: false } }
+                ]
+            },
+            sorts: [{ property: 'Due Date', direction: 'ascending' }]
         },
-        sorts: [{ property: 'Due Date', direction: 'ascending' }]
-    });
+        {
+            headers: {
+                'Authorization': `Bearer ${process.env.NOTION_TOKEN}`,
+                'Notion-Version': '2022-06-28',
+                'Content-Type': 'application/json'
+            }
+        }
+    );
 
-    return response.results.map(page => ({
+    return response.data.results.map(page => ({
         task: page.properties['Task']?.title?.[0]?.text?.content || 'Unknown',
         subject: page.properties['Subject']?.select?.name || 'Unknown',
         dueDate: page.properties['Due Date']?.date?.start || null
