@@ -25,7 +25,7 @@ class MashovClient {
         this.cookies = null;
         this.userId = null;
         this.children = [];
-        this.loggedIn = false;
+        this._loginPromise = null; // mutex: prevents concurrent logins
         // Stable device ID derived from username — Mashov sees the same "device" every time
         this.deviceUuid = crypto.createHash('md5').update(`sylphrena-${username}`).digest('hex');
         this._loadSession();
@@ -65,6 +65,20 @@ class MashovClient {
     }
 
     async login() {
+        // If a login is already in flight, wait for it instead of starting another
+        if (this._loginPromise) {
+            log('🏫 Login already in progress, waiting...');
+            return this._loginPromise;
+        }
+        this._loginPromise = this._doLogin();
+        try {
+            return await this._loginPromise;
+        } finally {
+            this._loginPromise = null;
+        }
+    }
+
+    async _doLogin() {
         const res = await axios.post(`${BASE_URL}/login`, {
             semel: this.semel,
             year: this.year,
@@ -229,12 +243,10 @@ async function pollMashov() {
                 }
             }
 
-            // --- Moodle assignments ---
+            // --- Moodle assignments (serialized to avoid concurrent 401 → double login) ---
             try {
-                const [assignments, groups] = await Promise.all([
-                    persistentClient.getMoodleAssignments(studentId),
-                    persistentClient.getGroups(studentId)
-                ]);
+                const groups = await persistentClient.getGroups(studentId);
+                const assignments = await persistentClient.getMoodleAssignments(studentId);
                 const subjectMap = {};
                 for (const g of groups) subjectMap[g.groupId] = g.subjectName;
 
