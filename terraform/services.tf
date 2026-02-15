@@ -202,6 +202,7 @@ resource "google_compute_instance" "sylphrena_listener_vm" {
   machine_type              = "e2-micro"
   zone                      = var.gce_zone # Use configurable zone
   allow_stopping_for_update = true         # Allow Terraform to stop the instance to apply changes like service account scope updates
+  tags                      = ["sylphrena-health"]
 
   boot_disk {
     initialize_params {
@@ -345,4 +346,18 @@ resource "google_cloud_run_v2_service_iam_policy" "private_access" {
   policy_data = data.google_iam_policy.private_run_policy.policy_data
 
   depends_on = [google_project_service.iam_api]
+}
+
+# 5. Firewall rule to allow health check access from a specific IP
+resource "google_compute_firewall" "health_check" {
+  name    = "sylphrena-health-check"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8080"]
+  }
+
+  source_ranges = [var.health_check_allowed_ip]
+  target_tags   = ["sylphrena-health"]
 }

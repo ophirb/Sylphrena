@@ -92,3 +92,9 @@ variable "mashov_child_filter" {
   type        = string
   default     = ""
 }
+
+variable "health_check_allowed_ip" {
+  description = "IP address allowed to access the health check endpoint (CIDR, e.g. '1.2.3.4/32')."
+  type        = string
+  default     = "46.121.4.76/32"
+}
