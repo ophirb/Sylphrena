@@ -115,6 +115,7 @@ class MashovClient {
         this.userId = data.credential.userId;
         this.children = data.accessToken?.children || [];
         this.loggedIn = true;
+
         this._saveSession();
 
         log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}, jwt=${this.authToken ? 'present' : 'missing'}`);
@@ -137,7 +138,25 @@ class MashovClient {
             log('🏫 Mashov heartbeat OK — session alive');
         } catch (err) {
             if (err.response?.status === 401) {
-                log('🏫 Heartbeat: session expired, will re-login on next poll');
+                // Server-side session expired — try JWT re-auth to silently
+                // re-establish without a full login (which triggers "new device" email)
+                if (this.authToken) {
+                    try {
+                        log('🏫 Heartbeat: session expired, trying JWT re-auth...');
+                        const res = await axios.get(`${BASE_URL}/students/${this.userId}/groups`, {
+                            headers: {
+                                'Accept': 'application/json, text/plain, */*',
+                                'Cookie': `MashovAuthToken=${this.authToken}`
+                            }
+                        });
+                        this._updateCookiesFromResponse(res);
+                        this._saveSession();
+                        log('🏫 Heartbeat: JWT re-auth successful — session re-established without login');
+                        return;
+                    } catch (jwtErr) {
+                        log('🏫 Heartbeat: JWT re-auth failed, will re-login on next poll');
+                    }
+                }
                 this.loggedIn = false;
             } else {
                 logErr(`🏫 Heartbeat failed: ${err.message}`);
