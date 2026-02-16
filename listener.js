@@ -6,6 +6,7 @@ const axios = require('axios');
 const { exec } = require('child_process');
 const { pollMashov, startMashovHeartbeat, saveMashovSession } = require('./mashov');
 const { setClient: setNotifyClient, sendDailySummary } = require('./notify');
+const { createNotionTask } = require('./shared');
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
 function logErr(...args) { console.error(`[${new Date().toISOString()}]`, ...args); }
@@ -116,6 +117,19 @@ whatsapp.on('message_create', async (msg) => {
         // Skip unmonitored groups
         if (!authorizedGroups.includes(trueGroupId)) {
             return;
+        }
+
+        // Create a Notion alert when a file/image is shared in the chat
+        if (msg.hasMedia) {
+            try {
+                await createNotionTask(
+                    'ברבוריקה - יש קובץ בצ׳ט שאני לא יכולה לקרוא. כדאי שתבדקי אם זה במקרה שיעורים שהמורה נתנה',
+                    chatName, null, 'WhatsApp'
+                );
+                log(`📎 [${chatName}] Media detected from ${sender} — Notion alert created`);
+            } catch (err) {
+                logErr(`📎 [${chatName}] Failed to create media alert: ${err.message}`);
+            }
         }
 
         const content = msg.body || msg.caption || "";
