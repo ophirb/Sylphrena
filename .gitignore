@@ -30,3 +30,6 @@ terraform/*.tfstate.*
 # debug
 .tmp
 .tmp/*
+
+# Sensitive prompt files (contain tokens)
+.notion-create-db-prompt.md

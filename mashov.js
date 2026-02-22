@@ -253,6 +253,10 @@ class MashovClient {
     async getMoodleAssignments(studentId) {
         return this._authGet(`${BASE_URL}/students/${studentId || this.userId}/moodle/assignments/grades`);
     }
+
+    async getGrades(studentId) {
+        return this._authGet(`${BASE_URL}/students/${studentId || this.userId}/grades`);
+    }
 }
 
 function getDedupPath() {
@@ -331,7 +335,8 @@ async function pollMashov(onComplete) {
                     const isMoodle = /מודל|moodle/i.test(text);
                     const source = isMoodle ? 'Mashov-Moodle' : 'Mashov';
                     const dueDate = item.lessonDate ? item.lessonDate.split('T')[0] : null;
-                    await createNotionTask(namePrefix + text, item.subjectName || 'Unknown', dueDate, source);
+                    const subject = item.subjectName || 'Unknown';
+                    await createNotionTask(namePrefix + subject + ' - ' + text, subject, dueDate, source, process.env.DATABASE_ID);
                     processedIds.add(dedupKey);
                     newCount++;
                     log(`🏫 ✅ New homework: [${item.subjectName}] "${text.slice(0, 60)}"`);
@@ -358,7 +363,7 @@ async function pollMashov(onComplete) {
                         const dueDate = item.endTime && item.endTime > 0
                             ? new Date(item.endTime * 1000).toISOString().split('T')[0]
                             : null;
-                        await createNotionTask(namePrefix + item.itemName, subject, dueDate, 'Mashov-Moodle');
+                        await createNotionTask(namePrefix + subject + ' - ' + item.itemName, subject, dueDate, 'Mashov-Moodle', process.env.DATABASE_ID);
                         processedIds.add(dedupKey);
                         newCount++;
                         log(`🏫 ✅ New Moodle task: [${subject}] "${item.itemName.slice(0, 60)}"`);
@@ -369,6 +374,36 @@ async function pollMashov(onComplete) {
             } catch (err) {
                 logErr(`🏫 ⚠️ Moodle assignments fetch failed for student ${studentId}:`, err.message);
                 sendError(`Moodle assignments fetch failed: ${err.message}`);
+            }
+
+            // --- Grades (alert on < 60) ---
+            try {
+                const grades = await persistentClient.getGrades(studentId);
+                log(`🏫 Fetched ${grades.length} grade(s) for student ${studentId}`);
+
+                for (const item of grades) {
+                    const dedupKey = `grade_${item.gradingEventId}`;
+                    if (processedIds.has(dedupKey)) continue;
+
+                    try {
+                        const grade = Number(item.grade);
+                        if (isNaN(grade) || grade >= 60) {
+                            processedIds.add(dedupKey);
+                            continue;
+                        }
+                        const subject = item.subjectName || 'Unknown';
+                        const eventType = item.gradingEventType || '';
+                        const taskText = namePrefix + subject + ' - ' + `ציון ${item.grade}` + (eventType ? ` (${eventType})` : '');
+                        await createNotionTask(taskText, subject, null, 'Mashov', process.env.DATABASE_ID);
+                        processedIds.add(dedupKey);
+                        newCount++;
+                        log(`🏫 ⚠️ Low grade alert: [${subject}] ${item.grade} (${eventType})`);
+                    } catch (err) {
+                        logErr(`🏫 ❌ Failed to create Notion task for grade eventId=${item.gradingEventId}:`, err.message);
+                    }
+                }
+            } catch (err) {
+                logErr(`🏫 ⚠️ Grades fetch failed for student ${studentId}:`, err.message);
             }
         }
 

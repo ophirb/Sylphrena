@@ -3,9 +3,9 @@ const { getUpcomingTasks } = require('./shared');
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
 function logErr(...args) { console.error(`[${new Date().toISOString()}]`, ...args); }
 
-// Phone numbers (Israel format without leading +)
-const SUMMARY_NUMBERS = ['972522949046', '972524651056', '972542202939'];
-const ERROR_NUMBER = '972522949046';
+// Phone numbers (Israel format without leading +) — configured via env vars
+const SUMMARY_NUMBERS = (process.env.SUMMARY_NUMBERS || '').split(',').filter(Boolean);
+const ERROR_NUMBER = process.env.ERROR_NUMBER || '';
 
 let client = null;
 let lastErrorSentAt = 0;
@@ -55,11 +55,11 @@ async function sendDailySummary() {
     log('📲 Preparing daily summary...');
 
     try {
-        const tasks = await getUpcomingTasks();
+        const tasks = await getUpcomingTasks(process.env.DATABASE_ID);
 
         let text;
         if (tasks.length === 0) {
-            text = '📚 סיכום יומי — אין משימות קרובות לשבוע הקרוב ✨';
+            text = '📚 סיכום יומי — אין משימות פתוחות ✨';
         } else {
             // Group tasks by due date
             const byDate = {};
@@ -70,7 +70,7 @@ async function sendDailySummary() {
             }
 
             const dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
-            const lines = ['📚 סיכום יומי — משימות לשבוע הקרוב:\n'];
+            const lines = ['📚 סיכום יומי — כל המשימות הפתוחות:\n'];
 
             for (const [date, dateTasks] of Object.entries(byDate)) {
                 if (date === 'ללא תאריך') {

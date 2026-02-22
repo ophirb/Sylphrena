@@ -7,9 +7,9 @@ const app = express();
 app.use(express.json({limit: '10mb'})); // Middleware to parse JSON bodies
 
 app.post('/', async (req, res) => {
-    const messageBatches = req.body;
-    if (!messageBatches || typeof messageBatches !== 'object') {
-        return res.status(400).send('Bad Request: Expected a JSON object of message batches.');
+    const { batches: messageBatches, databaseId } = req.body;
+    if (!messageBatches || typeof messageBatches !== 'object' || !databaseId) {
+        return res.status(400).send('Bad Request: Expected { batches: {}, databaseId: "" }.');
     }
 
     console.log(`📦 Received ${Object.keys(messageBatches).length} batch(es) to process.`);
@@ -17,7 +17,7 @@ app.post('/', async (req, res) => {
     // Process all batches concurrently without waiting for them to finish.
     for (const chatName in messageBatches) {
         const aggregatedText = messageBatches[chatName];
-        processTask(aggregatedText, chatName).catch(err => {
+        processTask(aggregatedText, chatName, databaseId).catch(err => {
             console.error(`Error in background task for ${chatName}:`, err);
         });
     }

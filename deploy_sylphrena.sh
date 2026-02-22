@@ -84,6 +84,8 @@ docker run -d --name ${VM_NAME} --restart always \
   --log-opt max-size=10m --log-opt max-file=3 \
   --env-file /tmp/syl_env \
   -e "APP_VERSION=${NEW_VER}" \
+  -e "SUMMARY_NUMBERS=972522949046,972524651056" \
+  -e "ERROR_NUMBER=972522949046" \
   -p 8080:8080 \
   -v /var/lib/sylphrena/puppeteer_session:/usr/src/app/puppeteer_session \
   ${IMAGE_TAG}

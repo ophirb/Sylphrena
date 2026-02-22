@@ -7,7 +7,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 const notion = new NotionClient({ auth: process.env.NOTION_TOKEN });
 
-async function processTask(fullText, chatName) {
+async function processTask(fullText, chatName, databaseId) {
     try {
         console.log(`🤖 Analyzing aggregated content from "${chatName}"...`);
         const today = new Date().toISOString().split('T')[0];
@@ -33,7 +33,7 @@ Return ONLY the raw JSON string.`;
 
         if (data.is_homework) {
             console.log(`📝 Task identified:`, data.task);
-            await createNotionTask(data.task, chatName, data.due_date, 'WhatsApp');
+            await createNotionTask(data.task, chatName, data.due_date, 'WhatsApp', databaseId);
             console.log('✅ Notion updated successfully.');
         }
     } catch (err) {
@@ -41,7 +41,7 @@ Return ONLY the raw JSON string.`;
     }
 }
 
-async function createNotionTask(taskText, subject, dueDate, source) {
+async function createNotionTask(taskText, subject, dueDate, source, databaseId) {
     const properties = {
         'Task': { title: [{ text: { content: taskText } }] },
         'Subject': { select: { name: subject } },
@@ -51,26 +51,17 @@ async function createNotionTask(taskText, subject, dueDate, source) {
         properties['Due Date'] = { date: { start: dueDate } };
     }
     await notion.pages.create({
-        parent: { database_id: process.env.DATABASE_ID },
+        parent: { database_id: databaseId },
         properties
     });
 }
 
-async function getUpcomingTasks() {
-    const today = new Date().toISOString().split('T')[0];
-    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
+async function getUpcomingTasks(databaseId) {
     // Direct API call — databases.query not available in @notionhq/client v5
     const response = await axios.post(
-        `https://api.notion.com/v1/databases/${process.env.DATABASE_ID}/query`,
+        `https://api.notion.com/v1/databases/${databaseId}/query`,
         {
-            filter: {
-                and: [
-                    { property: 'Due Date', date: { on_or_after: today } },
-                    { property: 'Due Date', date: { on_or_before: nextWeek } },
-                    { property: 'Done', checkbox: { equals: false } }
-                ]
-            },
+            filter: { property: 'Done', checkbox: { equals: false } },
             sorts: [{ property: 'Due Date', direction: 'ascending' }]
         },
         {

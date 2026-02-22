@@ -176,22 +176,12 @@ resource "google_cloud_run_v2_service" "sylphrena_processor" {
           }
         }
       }
-      env {
-        name = "DATABASE_ID"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.database_id_secret.secret_id
-            version = "latest"
-          }
-        }
-      }
     }
   }
 
   depends_on = [
     google_secret_manager_secret_iam_member.gemini_secret_accessor,
     google_secret_manager_secret_iam_member.notion_token_secret_accessor,
-    google_secret_manager_secret_iam_member.database_id_secret_accessor
   ]
 }
 
@@ -235,6 +225,8 @@ resource "google_compute_instance" "sylphrena_listener_vm" {
       mashov_school_semel_secret_id = google_secret_manager_secret.mashov_school_semel_secret.secret_id
       mashov_year_secret_id         = google_secret_manager_secret.mashov_year_secret.secret_id
       mashov_child_filter           = var.mashov_child_filter
+      summary_numbers               = var.summary_numbers
+      error_number                  = var.error_number
       DOCKER_CONFIG                 = "/var/lib/docker-config"
     })
   }

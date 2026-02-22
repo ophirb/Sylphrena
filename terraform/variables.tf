@@ -93,3 +93,13 @@ variable "mashov_child_filter" {
   default     = ""
 }
 
+variable "summary_numbers" {
+  description = "Comma-separated phone numbers for daily summary (Israel format, no +)."
+  type        = string
+}
+
+variable "error_number" {
+  description = "Phone number for error alerts (Israel format, no +)."
+  type        = string
+}
+

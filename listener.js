@@ -122,9 +122,10 @@ whatsapp.on('message_create', async (msg) => {
         // Create a Notion alert when a file/image is shared in the chat
         if (msg.hasMedia) {
             try {
+                const msgTime = new Date(msg.timestamp * 1000).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
                 await createNotionTask(
-                    'ברבוריקה - יש קובץ בצ׳ט שאני לא יכולה לקרוא. כדאי שתבדקי אם זה במקרה שיעורים שהמורה נתנה',
-                    chatName, null, 'WhatsApp'
+                    `התקבל קובץ בשעה ${msgTime}`,
+                    chatName, null, 'WhatsApp', process.env.DATABASE_ID
                 );
                 log(`📎 [${chatName}] Media detected from ${sender} — Notion alert created`);
             } catch (err) {
@@ -213,7 +214,7 @@ async function triggerProcessor() {
 
     try {
         const token = await getAuthToken();
-        const response = await axios.post(PROCESSOR_URL, batchToProcess, {
+        const response = await axios.post(PROCESSOR_URL, { batches: batchToProcess, databaseId: process.env.DATABASE_ID }, {
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
         });
         log(`✅ Processor responded: ${response.status} ${response.data}`);
