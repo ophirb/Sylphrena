@@ -408,7 +408,7 @@ resource "google_monitoring_alert_policy" "uptime_alert" {
       filter          = "resource.type = \"uptime_url\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id = \"${google_monitoring_uptime_check_config.vm_health.uptime_check_id}\""
       comparison      = "COMPARISON_GT"
       threshold_value = 1
-      duration        = "300s"
+      duration        = "900s"
 
       aggregations {
         alignment_period     = "300s"

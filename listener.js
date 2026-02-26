@@ -357,4 +357,18 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 // --- Initialization ---
-whatsapp.initialize();
+async function initializeWhatsApp(attempt = 1, maxAttempts = 5) {
+    try {
+        await whatsapp.initialize();
+    } catch (err) {
+        logErr(`❌ WhatsApp initialization failed (attempt ${attempt}/${maxAttempts}): ${err.message}`);
+        if (attempt < maxAttempts) {
+            const delay = attempt * 15000; // 15s, 30s, 45s, 60s
+            log(`🔄 Retrying in ${delay / 1000}s...`);
+            setTimeout(() => initializeWhatsApp(attempt + 1, maxAttempts), delay);
+        } else {
+            logErr('❌ WhatsApp initialization failed after all retries — QR scan required');
+        }
+    }
+}
+initializeWhatsApp();
