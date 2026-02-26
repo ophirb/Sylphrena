@@ -83,18 +83,19 @@ whatsapp.on('ready', () => {
     setInterval(checkDailySummary, 15 * 60 * 1000); // then every 15 min
     log('📲 Daily summary scheduled (checks every 15 min, sends at 18:00 Israel time)');
 
-    // Mashov polling (opt-in: only if MASHOV_USERNAME is set)
-    const MASHOV_INTERVAL = parseInt(process.env.MASHOV_CHECK_INTERVAL_MS || '1800000', 10);
-    const mashovComplete = () => { lastMashovPoll = new Date().toISOString(); };
-    if (process.env.MASHOV_USERNAME) {
-        log(`🏫 Mashov polling enabled, interval: ${MASHOV_INTERVAL / 1000 / 60} minutes`);
-        pollMashov(mashovComplete);
-        setInterval(() => pollMashov(mashovComplete), MASHOV_INTERVAL);
-        startMashovHeartbeat();
-    } else {
-        log('🏫 Mashov polling disabled (no MASHOV_USERNAME configured)');
-    }
 });
+
+// --- Mashov Polling (independent of WhatsApp connection) ---
+const MASHOV_INTERVAL = parseInt(process.env.MASHOV_CHECK_INTERVAL_MS || '1800000', 10);
+const mashovComplete = () => { lastMashovPoll = new Date().toISOString(); };
+if (process.env.MASHOV_USERNAME) {
+    log(`🏫 Mashov polling enabled, interval: ${MASHOV_INTERVAL / 1000 / 60} minutes`);
+    pollMashov(mashovComplete);
+    setInterval(() => pollMashov(mashovComplete), MASHOV_INTERVAL);
+    startMashovHeartbeat();
+} else {
+    log('🏫 Mashov polling disabled (no MASHOV_USERNAME configured)');
+}
 
 whatsapp.on('disconnected', (reason) => {
     whatsappState = 'disconnected';
@@ -241,22 +242,65 @@ async function triggerProcessor() {
 // --- Health Check HTTP Server ---
 const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || '8080', 10);
 
+function timeSince(isoString) {
+    if (!isoString) return null;
+    const seconds = Math.floor((Date.now() - new Date(isoString)) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
+}
+
 const healthServer = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
         let queueDepth = 0;
         for (const groupId in messageQueues) {
             queueDepth += messageQueues[groupId].messages.length;
         }
+
+        const whatsappOk = whatsappState === 'connected';
+        const whatsappDetail = {
+            connected: 'Connected and listening',
+            initializing: 'Connecting — session may need QR scan',
+            disconnected: 'Disconnected — QR scan required',
+            shutting_down: 'Shutting down',
+        }[whatsappState] || whatsappState;
+
+        const mashovEnabled = !!process.env.MASHOV_USERNAME;
+        const mashovOk = mashovEnabled && lastMashovPoll !== null;
+        const mashovDetail = !mashovEnabled
+            ? 'Disabled (no MASHOV_USERNAME)'
+            : lastMashovPoll
+                ? `Last poll ${timeSince(lastMashovPoll)}`
+                : 'Enabled — waiting for first poll';
+
+        const processorOk = lastProcessorTrigger !== null || queueDepth === 0;
+        const processorDetail = lastProcessorTrigger
+            ? `Last triggered ${timeSince(lastProcessorTrigger)}${queueDepth > 0 ? `, ${queueDepth} message(s) queued` : ', queue empty'}`
+            : queueDepth > 0
+                ? `Never triggered — ${queueDepth} message(s) queued`
+                : 'No messages processed yet';
+
+        const nowIsrael = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+        const summaryOk = lastDailySummary !== null;
+        const summaryDetail = lastDailySummary
+            ? `Last sent ${timeSince(lastDailySummary)}`
+            : `Not sent yet — scheduled at 18:00 Israel time (now ${nowIsrael.getHours()}:${String(nowIsrael.getMinutes()).padStart(2, '0')})`;
+
+        const allOk = whatsappOk && (!mashovEnabled || mashovOk);
+        const overallStatus = allOk ? 'ok' : whatsappState === 'initializing' ? 'initializing' : 'degraded';
+
         const body = JSON.stringify({
-            status: whatsappState === 'connected' ? 'ok' : whatsappState,
-            whatsapp: whatsappState,
-            uptime_seconds: Math.floor(process.uptime()),
-            last_processor_trigger: lastProcessorTrigger,
-            last_mashov_poll: lastMashovPoll,
-            last_daily_summary: lastDailySummary,
-            queue_depth: queueDepth,
-            version: process.env.APP_VERSION || 'unknown'
-        });
+            status: overallStatus,
+            version: process.env.APP_VERSION || 'unknown',
+            uptime: `${Math.floor(process.uptime() / 60)}m ${Math.floor(process.uptime() % 60)}s`,
+            components: {
+                whatsapp: { ok: whatsappOk, state: whatsappState, detail: whatsappDetail },
+                mashov: { ok: mashovOk, detail: mashovDetail },
+                processor: { ok: processorOk, queue_depth: queueDepth, detail: processorDetail },
+                notifications: { ok: summaryOk || true, detail: summaryDetail },
+            }
+        }, null, 2);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(body);
     } else {
