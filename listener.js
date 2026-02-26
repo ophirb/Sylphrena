@@ -42,6 +42,12 @@ let whatsappState = 'initializing';
 let lastProcessorTrigger = null;
 let lastMashovPoll = null;
 let lastDailySummary = null;
+let latestQr = null;
+
+// Token to protect the /qr endpoint — generated once at startup
+const { randomBytes } = require('crypto');
+const QR_TOKEN = randomBytes(8).toString('hex');
+log(`🔑 QR endpoint token: ${QR_TOKEN}  →  /qr?token=${QR_TOKEN}`);
 
 // --- WhatsApp Client Setup ---
 const whatsapp = new Client({
@@ -62,6 +68,7 @@ const whatsapp = new Client({
 });
 
 whatsapp.on('qr', qr => {
+    latestQr = qr;
     console.log('\n\n\n\n\n\n\n\n');
     log('Scan this QR code with WhatsApp:\n');
     qrcode.generate(qr, {small: true});
@@ -69,6 +76,7 @@ whatsapp.on('qr', qr => {
 
 whatsapp.on('ready', () => {
     whatsappState = 'connected';
+    latestQr = null;
     log('🛡️ Sylphrena Listener is ready.');
     log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
     setInterval(triggerProcessor, CHECK_INTERVAL);
@@ -303,6 +311,24 @@ const healthServer = http.createServer((req, res) => {
         }, null, 2);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(body);
+    } else if (req.method === 'GET' && req.url.startsWith('/qr')) {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        if (params.get('token') !== QR_TOKEN) {
+            res.writeHead(401, { 'Content-Type': 'text/plain' });
+            res.end('Unauthorized');
+            return;
+        }
+        if (!latestQr) {
+            const msg = whatsappState === 'connected'
+                ? 'WhatsApp is already connected — no QR needed.'
+                : 'No QR code available yet — try again in a few seconds.';
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sylphrena QR</title><style>body{display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;background:#f5f5f5;color:#555;font-size:18px;}</style></head><body><p>${msg}</p></body></html>`);
+            return;
+        }
+        const qrJson = JSON.stringify(latestQr);
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="15"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sylphrena QR</title><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;background:#f5f5f5;}h2{color:#333;margin-bottom:16px;}p{color:#888;font-size:13px;margin-top:16px;}</style></head><body><h2>Scan with WhatsApp</h2><div id="qr"></div><p>Auto-refreshes every 15 seconds</p><script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script><script>new QRCode(document.getElementById('qr'),{text:${qrJson},width:256,height:256});</script></body></html>`);
     } else {
         res.writeHead(404);
         res.end();
