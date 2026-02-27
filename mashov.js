@@ -409,7 +409,7 @@ async function pollMashov(onComplete) {
 
         saveProcessedIds(processedIds);
         log(`🏫 Mashov polling complete. ${newCount} new item(s) added.`);
-        if (onComplete) onComplete();
+        if (onComplete) onComplete(newCount);
     } catch (err) {
         logErr('🏫 ❌ Mashov polling error:', err.message);
         sendError(`Mashov polling failed: ${err.message}`);

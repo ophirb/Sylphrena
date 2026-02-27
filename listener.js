@@ -39,9 +39,14 @@ const messageQueues = {}; // { [groupId]: { messages: [], chatName: 'name' } }
 // --- Health State Tracking ---
 const startedAt = new Date().toISOString();
 let whatsappState = 'initializing';
+let whatsappInitAttempt = 0;
 let lastProcessorTrigger = null;
 let lastMashovPoll = null;
 let lastDailySummary = null;
+let lastMessageReceived = null;
+let lastNotionWrite = null;
+let mashovItemsToday = 0;
+let mashovItemsTodayDate = null;
 let latestQr = null;
 
 // Token to protect the /qr endpoint — generated once at startup
@@ -77,6 +82,7 @@ whatsapp.on('qr', qr => {
 whatsapp.on('ready', () => {
     whatsappState = 'connected';
     latestQr = null;
+    whatsappInitAttempt = 0;
     log('🛡️ Sylphrena Listener is ready.');
     log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
     setInterval(triggerProcessor, CHECK_INTERVAL);
@@ -95,7 +101,15 @@ whatsapp.on('ready', () => {
 
 // --- Mashov Polling (independent of WhatsApp connection) ---
 const MASHOV_INTERVAL = parseInt(process.env.MASHOV_CHECK_INTERVAL_MS || '1800000', 10);
-const mashovComplete = () => { lastMashovPoll = new Date().toISOString(); };
+const mashovComplete = (newItems = 0) => {
+    lastMashovPoll = new Date().toISOString();
+    if (newItems > 0) {
+        lastNotionWrite = new Date().toISOString();
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (mashovItemsTodayDate !== todayStr) { mashovItemsToday = 0; mashovItemsTodayDate = todayStr; }
+        mashovItemsToday += newItems;
+    }
+};
 if (process.env.MASHOV_USERNAME) {
     log(`🏫 Mashov polling enabled, interval: ${MASHOV_INTERVAL / 1000 / 60} minutes`);
     pollMashov(mashovComplete);
@@ -127,6 +141,7 @@ whatsapp.on('message_create', async (msg) => {
         if (!authorizedGroups.includes(trueGroupId)) {
             return;
         }
+        lastMessageReceived = new Date().toISOString();
 
         // Create a Notion alert when a file/image is shared in the chat
         if (msg.hasMedia) {
@@ -136,6 +151,7 @@ whatsapp.on('message_create', async (msg) => {
                     `התקבל קובץ בשעה ${msgTime}`,
                     chatName, null, 'WhatsApp', process.env.DATABASE_ID
                 );
+                lastNotionWrite = new Date().toISOString();
                 log(`📎 [${chatName}] Media detected from ${sender} — Notion alert created`);
             } catch (err) {
                 logErr(`📎 [${chatName}] Failed to create media alert: ${err.message}`);
@@ -259,6 +275,23 @@ function timeSince(isoString) {
     return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function timeUntil(isoString) {
+    if (!isoString) return null;
+    const seconds = Math.floor((new Date(isoString) - Date.now()) / 1000);
+    if (seconds <= 0) return 'now';
+    if (seconds < 60) return `in ${seconds}s`;
+    if (seconds < 3600) return `in ${Math.floor(seconds / 60)}m`;
+    return `in ${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function nextDailySummaryISO() {
+    const israelNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+    const next = new Date(israelNow);
+    next.setHours(18, 0, 0, 0);
+    if (israelNow.getHours() >= 18) next.setDate(next.getDate() + 1);
+    return next.toISOString();
+}
+
 const healthServer = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
         let queueDepth = 0;
@@ -276,10 +309,13 @@ const healthServer = http.createServer((req, res) => {
 
         const mashovEnabled = !!process.env.MASHOV_USERNAME;
         const mashovOk = mashovEnabled && lastMashovPoll !== null;
+        const nextMashovPoll = lastMashovPoll
+            ? new Date(new Date(lastMashovPoll).getTime() + MASHOV_INTERVAL).toISOString()
+            : null;
         const mashovDetail = !mashovEnabled
             ? 'Disabled (no MASHOV_USERNAME)'
             : lastMashovPoll
-                ? `Last poll ${timeSince(lastMashovPoll)}`
+                ? `Last poll ${timeSince(lastMashovPoll)}, next ${timeUntil(nextMashovPoll)}`
                 : 'Enabled — waiting for first poll';
 
         const processorOk = lastProcessorTrigger !== null || queueDepth === 0;
@@ -289,11 +325,17 @@ const healthServer = http.createServer((req, res) => {
                 ? `Never triggered — ${queueDepth} message(s) queued`
                 : 'No messages processed yet';
 
-        const nowIsrael = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
         const summaryOk = lastDailySummary !== null;
         const summaryDetail = lastDailySummary
-            ? `Last sent ${timeSince(lastDailySummary)}`
-            : `Not sent yet — scheduled at 18:00 Israel time (now ${nowIsrael.getHours()}:${String(nowIsrael.getMinutes()).padStart(2, '0')})`;
+            ? `Last sent ${timeSince(lastDailySummary)}, next ${timeUntil(nextDailySummaryISO())}`
+            : `Not sent yet — next ${timeUntil(nextDailySummaryISO())}`;
+
+        const mem = process.memoryUsage();
+        const mb = v => Math.round(v / 1024 / 1024);
+        const heapUsedMB = mb(mem.heapUsed);
+        const heapTotalMB = mb(mem.heapTotal);
+        const rssMB = mb(mem.rss);
+        const memWarning = heapUsedMB > 200 ? ' ⚠️ approaching heap limit' : '';
 
         const allOk = whatsappOk && (!mashovEnabled || mashovOk);
         const overallStatus = allOk ? 'ok' : whatsappState === 'initializing' ? 'initializing' : 'degraded';
@@ -302,11 +344,28 @@ const healthServer = http.createServer((req, res) => {
             status: overallStatus,
             version: process.env.APP_VERSION || 'unknown',
             uptime: `${Math.floor(process.uptime() / 60)}m ${Math.floor(process.uptime() % 60)}s`,
+            memory: {
+                heap_used: `${heapUsedMB}MB`,
+                heap_total: `${heapTotalMB}MB`,
+                rss: `${rssMB}MB`,
+                detail: `${heapUsedMB}/${heapTotalMB}MB heap, ${rssMB}MB RSS${memWarning}`,
+            },
             components: {
-                whatsapp: { ok: whatsappOk, state: whatsappState, detail: whatsappDetail },
-                mashov: { ok: mashovOk, detail: mashovDetail },
+                whatsapp: {
+                    ok: whatsappOk,
+                    state: whatsappState,
+                    detail: whatsappDetail,
+                    ...(whatsappInitAttempt > 1 && { retry: `attempt ${whatsappInitAttempt}/5` }),
+                    last_message: lastMessageReceived ? timeSince(lastMessageReceived) : 'none this session',
+                },
+                mashov: {
+                    ok: mashovOk,
+                    detail: mashovDetail,
+                    items_today: mashovItemsToday,
+                    last_notion_write: lastNotionWrite ? timeSince(lastNotionWrite) : 'none this session',
+                },
                 processor: { ok: processorOk, queue_depth: queueDepth, detail: processorDetail },
-                notifications: { ok: summaryOk || true, detail: summaryDetail },
+                notifications: { ok: true, detail: summaryDetail },
             }
         }, null, 2);
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -358,6 +417,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 // --- Initialization ---
 async function initializeWhatsApp(attempt = 1, maxAttempts = 5) {
+    whatsappInitAttempt = attempt;
     try {
         await whatsapp.initialize();
     } catch (err) {
