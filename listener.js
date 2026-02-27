@@ -41,6 +41,8 @@ const messageQueues = {}; // { [groupId]: { messages: [], chatName: 'name' } }
 const startedAt = new Date().toISOString();
 let whatsappState = 'initializing';
 let whatsappInitAttempt = 0;
+let isShuttingDown = false;
+let intervalsScheduled = false;
 let lastProcessorTrigger = null;
 let lastMashovPoll = null;
 let lastDailySummary = null;
@@ -80,28 +82,30 @@ whatsapp.on('qr', qr => {
     qrcode.generate(qr, {small: true});
 });
 
+async function checkDailySummary() {
+    const sent = await sendDailySummary();
+    if (sent) lastDailySummary = new Date().toISOString();
+}
+
 whatsapp.on('ready', () => {
     whatsappState = 'connected';
     latestQr = null;
     whatsappInitAttempt = 0;
     log('🛡️ Sylphrena Listener is ready.');
-    log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
-    setInterval(triggerProcessor, CHECK_INTERVAL);
 
-    // Back up session immediately and then every hour
-    backupSession();
-    setInterval(backupSession, 60 * 60 * 1000);
-
-    // Notifications
-    setNotifyClient(whatsapp);
-    async function checkDailySummary() {
-        const sent = await sendDailySummary();
-        if (sent) lastDailySummary = new Date().toISOString();
+    if (!intervalsScheduled) {
+        intervalsScheduled = true;
+        log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
+        setInterval(triggerProcessor, CHECK_INTERVAL);
+        setInterval(backupSession, 60 * 60 * 1000);
+        setInterval(checkDailySummary, 15 * 60 * 1000);
+        log('📲 Daily summary scheduled (checks every 15 min, sends at 18:00 Israel time)');
     }
-    checkDailySummary(); // check immediately on startup
-    setInterval(checkDailySummary, 15 * 60 * 1000); // then every 15 min
-    log('📲 Daily summary scheduled (checks every 15 min, sends at 18:00 Israel time)');
 
+    // Always run on (re)connect
+    backupSession();
+    setNotifyClient(whatsapp);
+    checkDailySummary();
 });
 
 // --- Mashov Polling (independent of WhatsApp connection) ---
@@ -127,6 +131,15 @@ if (process.env.MASHOV_USERNAME) {
 whatsapp.on('disconnected', (reason) => {
     whatsappState = 'disconnected';
     log(`⚠️ WhatsApp disconnected: ${reason}`);
+    if (!isShuttingDown) {
+        log('🔄 Will attempt to reconnect in 30s...');
+        setTimeout(async () => {
+            if (isShuttingDown) return;
+            log('🔄 Attempting WhatsApp reconnect...');
+            try { await whatsapp.destroy(); } catch {}
+            initializeWhatsApp(1, 5, true);
+        }, 30000);
+    }
 });
 
 whatsapp.on('message_create', async (msg) => {
@@ -405,6 +418,7 @@ healthServer.listen(HEALTH_PORT, () => {
 
 // --- Graceful Shutdown ---
 async function shutdown(signal) {
+    isShuttingDown = true;
     log(`🛑 Received ${signal}, shutting down gracefully...`);
     whatsappState = 'shutting_down';
     saveMashovSession();
@@ -438,17 +452,17 @@ setInterval(() => {
 }, 2 * 60 * 1000);
 
 // --- Initialization ---
-async function initializeWhatsApp(attempt = 1, maxAttempts = 5) {
+async function initializeWhatsApp(attempt = 1, maxAttempts = 5, isReconnect = false) {
     whatsappInitAttempt = attempt;
     try {
-        if (attempt === 1) await restoreSession();
+        if (attempt === 1 && !isReconnect) await restoreSession();
         await whatsapp.initialize();
     } catch (err) {
         logErr(`❌ WhatsApp initialization failed (attempt ${attempt}/${maxAttempts}): ${err.message}`);
         if (attempt < maxAttempts) {
             const delay = attempt * 15000; // 15s, 30s, 45s, 60s
             log(`🔄 Retrying in ${delay / 1000}s...`);
-            setTimeout(() => initializeWhatsApp(attempt + 1, maxAttempts), delay);
+            setTimeout(() => initializeWhatsApp(attempt + 1, maxAttempts, isReconnect), delay);
         } else {
             logErr('❌ WhatsApp initialization failed after all retries — QR scan required');
         }
