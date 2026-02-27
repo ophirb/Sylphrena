@@ -13,6 +13,8 @@ const ONBOARD_SESSION_DIR = path.join(__dirname, '.wwebjs_onboard');
 const SECRET_NAME = 'authorized-groups';
 const DEFAULT_VM_NAME = 'sylphrena-listener-vm';
 const DEFAULT_ZONE = 'us-central1-a';
+const SESSION_BACKUP_BUCKET = 'sylphrena-wa-session-backup';
+const GCS_BACKUP_OBJECT = 'wwebjs_auth.tar.gz';
 const QR_TIMEOUT_MS = 120_000;
 
 
@@ -561,16 +563,26 @@ async function signOut() {
             console.error('  Failed to clear authorized groups:', err.message);
         }
 
-        // Clear VM session
+        // Clear VM session (only the WhatsApp session dir, not Mashov data files)
         console.log('Clearing VM session...');
         try {
             runGcloud(
                 `gcloud compute ssh ${vmName} --zone=${zone} --project=${projectId} --command=` +
-                `"sudo docker stop ${vmName} && sudo rm -rf /var/lib/sylphrena/puppeteer_session/* && sudo docker start ${vmName}"`
+                `"sudo docker stop ${vmName} && sudo rm -rf /var/lib/sylphrena/puppeteer_session/session && sudo docker start ${vmName}"`
             );
             console.log('  VM session cleared and container restarting.');
         } catch (err) {
             console.error('  Failed to clear VM session:', err.message);
+        }
+
+        // Clear GCS backup so the old session isn't auto-restored on next restart
+        console.log('Clearing GCS session backup...');
+        try {
+            runGcloud(`gcloud storage rm gs://${SESSION_BACKUP_BUCKET}/${GCS_BACKUP_OBJECT} --project=${projectId}`);
+            console.log('  GCS backup cleared.');
+        } catch (err) {
+            // Bucket might not exist or backup object might not be present — not fatal
+            console.log('  No GCS backup to clear (or bucket not configured).');
         }
 
         console.log('\nFull sign-out complete (sessions + authorized groups).');
