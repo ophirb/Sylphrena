@@ -5,7 +5,7 @@ const { execSync } = require('child_process');
 
 const BUCKET = process.env.SESSION_BACKUP_BUCKET;
 const SESSION_DIR = process.env.PUPPETEER_SESSION_DIR || '/usr/src/app/puppeteer_session';
-const AUTH_DIR = path.join(SESSION_DIR, 'wwebjs_auth');
+const AUTH_DIR = path.join(SESSION_DIR, 'session');
 const BACKUP_TAR = '/tmp/wwebjs_auth_backup.tar.gz';
 const GCS_OBJECT = 'wwebjs_auth.tar.gz';
 
@@ -26,13 +26,29 @@ async function backupSession() {
         log('💾 Session backup: no auth dir found, skipping');
         return;
     }
+    let tarOk = false;
     try {
         execSync(
             `tar czf ${BACKUP_TAR} ` +
+            `--ignore-failed-read --warning=no-file-changed ` +
             `--exclude='*/Cache' --exclude='*/GPUCache' ` +
             `--exclude='*/Code Cache' --exclude='*/blob_storage' ` +
-            `-C ${SESSION_DIR} wwebjs_auth`
+            `-C ${SESSION_DIR} session`,
+            { stdio: 'pipe' }
         );
+        tarOk = true;
+    } catch (err) {
+        // Exit code 1 = warnings only (e.g. file changed as we read it) — archive is still usable
+        if (err.status === 1 && fs.existsSync(BACKUP_TAR) && fs.statSync(BACKUP_TAR).size > 0) {
+            tarOk = true;
+        } else {
+            const detail = err.stderr ? err.stderr.toString().trim() : err.message;
+            logErr(`💾 Session backup failed (tar exit ${err.status}): ${detail || 'unknown error'}`);
+            try { fs.unlinkSync(BACKUP_TAR); } catch {}
+        }
+    }
+    if (!tarOk) return;
+    try {
         const token = await getGCSToken();
         const data = fs.readFileSync(BACKUP_TAR);
         await axios.put(
@@ -48,7 +64,7 @@ async function backupSession() {
         const sizeMB = (data.length / 1024 / 1024).toFixed(1);
         log(`💾 Session backed up to gs://${BUCKET}/${GCS_OBJECT} (${sizeMB}MB)`);
     } catch (err) {
-        logErr(`💾 Session backup failed: ${err.message}`);
+        logErr(`💾 Session backup upload failed: ${err.message}`);
         try { fs.unlinkSync(BACKUP_TAR); } catch {}
     }
 }

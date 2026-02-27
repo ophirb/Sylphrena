@@ -86,6 +86,7 @@ docker run -d --name ${VM_NAME} --restart always \
   -e "APP_VERSION=${NEW_VER}" \
   -e "SUMMARY_NUMBERS=972522949046,972524651056" \
   -e "ERROR_NUMBER=972522949046" \
+  -e "SESSION_BACKUP_BUCKET=sylphrena-wa-session-backup" \
   -p 8080:8080 \
   -v /var/lib/sylphrena/puppeteer_session:/usr/src/app/puppeteer_session \
   ${IMAGE_TAG}
