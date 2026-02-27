@@ -44,6 +44,8 @@ let whatsappState = 'initializing';
 let whatsappInitAttempt = 0;
 let isShuttingDown = false;
 let intervalsScheduled = false;
+let initWatchdogTimer = null;
+let processorConsecutiveFails = 0;
 let lastProcessorTrigger = null;
 let lastMashovPoll = null;
 let lastDailySummary = null;
@@ -114,6 +116,7 @@ async function checkDailySummary() {
 }
 
 whatsapp.on('ready', () => {
+    if (initWatchdogTimer) { clearTimeout(initWatchdogTimer); initWatchdogTimer = null; }
     whatsappState = 'connected';
     latestQr = null;
     whatsappInitAttempt = 0;
@@ -290,14 +293,20 @@ async function triggerProcessor() {
     try {
         const token = await getAuthToken();
         const response = await axios.post(PROCESSOR_URL, { batches: batchToProcess, databaseId: process.env.DATABASE_ID }, {
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            timeout: 30000,
         });
         log(`✅ Processor responded: ${response.status} ${response.data}`);
         lastProcessorTrigger = new Date().toISOString();
+        processorConsecutiveFails = 0;
     } catch (error) {
-        logErr(`❌ Failed to trigger processor: ${error.message}`);
+        processorConsecutiveFails++;
+        logErr(`❌ Failed to trigger processor (fail #${processorConsecutiveFails}): ${error.message}`);
         if (error.response) {
             logErr(`   Response: ${error.response.status} ${JSON.stringify(error.response.data)}`);
+        }
+        if (processorConsecutiveFails === 3) {
+            sendError(`Processor unreachable after 3 consecutive attempts: ${error.message}`).catch(() => {});
         }
         // Restore snapshot — prepend to any new messages that arrived during the attempt
         let restoredCount = 0;
@@ -387,6 +396,15 @@ const healthServer = http.createServer((req, res) => {
         const rssMB = mb(mem.rss);
         const memWarning = heapUsedMB > 200 ? ' ⚠️ approaching heap limit' : '';
 
+        let diskInfo = null;
+        try {
+            const stat = fs.statfsSync('/usr/src/app');
+            const freeMB = Math.round((stat.bfree * stat.bsize) / 1024 / 1024);
+            const totalMB = Math.round((stat.blocks * stat.bsize) / 1024 / 1024);
+            const usedPct = Math.round(((totalMB - freeMB) / totalMB) * 100);
+            diskInfo = { free: `${freeMB}MB`, total: `${totalMB}MB`, used_pct: `${usedPct}%`, ...(usedPct > 85 && { warning: '⚠️ disk nearly full' }) };
+        } catch {}
+
         const allOk = whatsappOk && (!mashovEnabled || mashovOk);
         const overallStatus = allOk ? 'ok' : whatsappState === 'initializing' ? 'initializing' : 'degraded';
 
@@ -400,6 +418,7 @@ const healthServer = http.createServer((req, res) => {
                 rss: `${rssMB}MB`,
                 detail: `${heapUsedMB}/${heapTotalMB}MB heap, ${rssMB}MB RSS${memWarning}`,
             },
+            ...(diskInfo && { disk: diskInfo }),
             components: {
                 whatsapp: {
                     ok: whatsappOk,
@@ -495,10 +514,21 @@ setInterval(() => {
 // --- Initialization ---
 async function initializeWhatsApp(attempt = 1, maxAttempts = 5, isReconnect = false) {
     whatsappInitAttempt = attempt;
+
+    // Watchdog: if ready never fires within 3 minutes, destroy and retry
+    if (initWatchdogTimer) clearTimeout(initWatchdogTimer);
+    initWatchdogTimer = setTimeout(async () => {
+        initWatchdogTimer = null;
+        logErr(`⏱️ WhatsApp init watchdog fired: no ready event after 3 minutes (attempt ${attempt}/${maxAttempts}) — forcing retry`);
+        try { await whatsapp.destroy(); } catch {}
+        if (!isShuttingDown) initializeWhatsApp(attempt < maxAttempts ? attempt + 1 : 1, maxAttempts, isReconnect);
+    }, 3 * 60 * 1000);
+
     try {
         if (attempt === 1 && !isReconnect) await restoreSession();
         await whatsapp.initialize();
     } catch (err) {
+        if (initWatchdogTimer) { clearTimeout(initWatchdogTimer); initWatchdogTimer = null; }
         logErr(`❌ WhatsApp initialization failed (attempt ${attempt}/${maxAttempts}): ${err.message}`);
         if (attempt < maxAttempts) {
             const delay = attempt * 15000; // 15s, 30s, 45s, 60s

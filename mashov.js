@@ -38,8 +38,9 @@ class MashovClient {
     }
 
     _loadSession() {
+        const sessionPath = this._getSessionPath();
         try {
-            const data = JSON.parse(fs.readFileSync(this._getSessionPath(), 'utf8'));
+            const data = JSON.parse(fs.readFileSync(sessionPath, 'utf8'));
             this.csrfToken = data.csrfToken;
             this.cookies = data.cookies;
             this.authToken = data.authToken || null;
@@ -47,23 +48,31 @@ class MashovClient {
             this.children = data.children || [];
             this.loggedIn = true;
             log(`🏫 Mashov session restored from disk (jwt=${this.authToken ? 'present' : 'missing'})`);
-        } catch {
-            // No saved session — will login on first poll
+        } catch (err) {
+            if (err.code !== 'ENOENT') {
+                logErr(`🏫 Failed to load session (will re-login): ${err.message}`);
+                try { fs.unlinkSync(sessionPath); } catch {} // remove corrupt file
+            }
+            // No saved session or corrupt — will login on first poll
         }
     }
 
     _saveSession() {
+        const dest = this._getSessionPath();
+        const tmp = dest + '.tmp';
         try {
-            fs.writeFileSync(this._getSessionPath(), JSON.stringify({
+            fs.writeFileSync(tmp, JSON.stringify({
                 csrfToken: this.csrfToken,
                 cookies: this.cookies,
                 authToken: this.authToken,
                 userId: this.userId,
                 children: this.children
             }));
+            fs.renameSync(tmp, dest);
             log('🏫 Mashov session saved to disk');
         } catch (err) {
             logErr(`🏫 Failed to save Mashov session: ${err.message}`);
+            try { fs.unlinkSync(tmp); } catch {}
         }
     }
 
@@ -276,7 +285,15 @@ function loadProcessedIds() {
 }
 
 function saveProcessedIds(ids) {
-    fs.writeFileSync(getDedupPath(), JSON.stringify({ processedIds: [...ids] }));
+    const dest = getDedupPath();
+    const tmp = dest + '.tmp';
+    try {
+        fs.writeFileSync(tmp, JSON.stringify({ processedIds: [...ids] }));
+        fs.renameSync(tmp, dest);
+    } catch (err) {
+        logErr(`🏫 Failed to save processed IDs: ${err.message}`);
+        try { fs.unlinkSync(tmp); } catch {}
+    }
 }
 
 async function pollMashov(onComplete) {
