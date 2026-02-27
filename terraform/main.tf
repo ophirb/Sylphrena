@@ -36,3 +36,7 @@ resource "google_project_service" "secretmanager_api" {
 resource "google_project_service" "monitoring_api" {
   service = "monitoring.googleapis.com"
 }
+
+resource "google_project_service" "storage_api" {
+  service = "storage.googleapis.com"
+}

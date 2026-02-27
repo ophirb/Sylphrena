@@ -27,7 +27,7 @@ RUN npm install --frozen-lockfile --omit=dev
 RUN npx puppeteer browsers install chrome
 
 # Copy application code (include package.json to guard against stale layer cache)
-COPY --chown=node:node listener.js processor.js shared.js mashov.js notify.js entrypoint.sh package.json ./
+COPY --chown=node:node listener.js processor.js shared.js mashov.js notify.js session-backup.js entrypoint.sh package.json ./
 RUN chmod +x ./entrypoint.sh
 
 ENTRYPOINT [ "./entrypoint.sh" ]

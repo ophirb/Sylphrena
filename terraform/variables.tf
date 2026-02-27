@@ -103,3 +103,16 @@ variable "error_number" {
   type        = string
 }
 
+variable "session_backup_bucket" {
+  description = "GCS bucket name for WhatsApp session backup. Leave empty to disable."
+  type        = string
+  default     = ""
+}
+
+variable "qr_token" {
+  description = "Static token for the /qr endpoint. Auto-generated on each container start if empty."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+

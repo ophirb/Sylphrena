@@ -227,6 +227,8 @@ resource "google_compute_instance" "sylphrena_listener_vm" {
       mashov_child_filter           = var.mashov_child_filter
       summary_numbers               = var.summary_numbers
       error_number                  = var.error_number
+      session_backup_bucket         = var.session_backup_bucket
+      qr_token                      = var.qr_token
       DOCKER_CONFIG                 = "/var/lib/docker-config"
     })
   }
@@ -432,4 +434,26 @@ resource "google_monitoring_alert_policy" "uptime_alert" {
   }
 
   depends_on = [google_project_service.monitoring_api]
+}
+
+# --- GCS Session Backup ---
+
+resource "google_storage_bucket" "session_backup" {
+  count    = var.session_backup_bucket != "" ? 1 : 0
+  name     = var.session_backup_bucket
+  location = var.gcp_region
+
+  lifecycle_rule {
+    action { type = "Delete" }
+    condition { age = 30 }
+  }
+
+  depends_on = [google_project_service.storage_api]
+}
+
+resource "google_storage_bucket_iam_member" "session_backup_writer" {
+  count  = var.session_backup_bucket != "" ? 1 : 0
+  bucket = google_storage_bucket.session_backup[0].name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${data.google_compute_default_service_account.default.email}"
 }

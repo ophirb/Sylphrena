@@ -79,6 +79,8 @@ docker run -d --name "${container_name}" --restart always --log-opt max-size=10m
   -e "MASHOV_CHILD_FILTER=${mashov_child_filter}" \
   -e "SUMMARY_NUMBERS=${summary_numbers}" \
   -e "ERROR_NUMBER=${error_number}" \
+  -e "SESSION_BACKUP_BUCKET=${session_backup_bucket}" \
+  -e "QR_TOKEN=${qr_token}" \
   -e "APP_VERSION=${docker_image_tag}" \
   -p 8080:8080 \
   -v "${puppeteer_session_host_path}:/usr/src/app/puppeteer_session" \

@@ -7,6 +7,7 @@ const { exec } = require('child_process');
 const { pollMashov, startMashovHeartbeat, saveMashovSession } = require('./mashov');
 const { setClient: setNotifyClient, sendDailySummary } = require('./notify');
 const { createNotionTask } = require('./shared');
+const { backupSession, restoreSession } = require('./session-backup');
 
 function log(...args) { console.log(`[${new Date().toISOString()}]`, ...args); }
 function logErr(...args) { console.error(`[${new Date().toISOString()}]`, ...args); }
@@ -49,9 +50,9 @@ let mashovItemsToday = 0;
 let mashovItemsTodayDate = null;
 let latestQr = null;
 
-// Token to protect the /qr endpoint — generated once at startup
+// Token to protect the /qr endpoint — use env var for persistence across restarts
 const { randomBytes } = require('crypto');
-const QR_TOKEN = randomBytes(8).toString('hex');
+const QR_TOKEN = process.env.QR_TOKEN || randomBytes(8).toString('hex');
 log(`🔑 QR endpoint token: ${QR_TOKEN}  →  /qr?token=${QR_TOKEN}`);
 
 // --- WhatsApp Client Setup ---
@@ -86,6 +87,10 @@ whatsapp.on('ready', () => {
     log('🛡️ Sylphrena Listener is ready.');
     log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
     setInterval(triggerProcessor, CHECK_INTERVAL);
+
+    // Back up session immediately and then every hour
+    backupSession();
+    setInterval(backupSession, 60 * 60 * 1000);
 
     // Notifications
     setNotifyClient(whatsapp);
@@ -415,10 +420,28 @@ async function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// --- OOM Watchdog ---
+// If heap exceeds 220MB (V8 is capped at 256MB), trigger a graceful shutdown
+// so Docker's --restart always brings the container back clean.
+// Skip the first 2 minutes to let WhatsApp fully initialize.
+const OOM_HEAP_THRESHOLD_MB = 220;
+setInterval(() => {
+    const heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    if (heapMB > OOM_HEAP_THRESHOLD_MB) {
+        if (process.uptime() < 120) {
+            log(`⚠️ OOM watchdog: heap ${heapMB}MB > ${OOM_HEAP_THRESHOLD_MB}MB — init grace period, skipping`);
+            return;
+        }
+        logErr(`🔴 OOM watchdog: heap ${heapMB}MB > ${OOM_HEAP_THRESHOLD_MB}MB — triggering graceful restart`);
+        shutdown('OOM_WATCHDOG');
+    }
+}, 2 * 60 * 1000);
+
 // --- Initialization ---
 async function initializeWhatsApp(attempt = 1, maxAttempts = 5) {
     whatsappInitAttempt = attempt;
     try {
+        if (attempt === 1) await restoreSession();
         await whatsapp.initialize();
     } catch (err) {
         logErr(`❌ WhatsApp initialization failed (attempt ${attempt}/${maxAttempts}): ${err.message}`);
