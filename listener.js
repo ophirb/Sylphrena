@@ -1,11 +1,12 @@
 require('dotenv').config();
 const http = require('http');
+const fs = require('fs');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const { exec } = require('child_process');
 const { pollMashov, startMashovHeartbeat, saveMashovSession } = require('./mashov');
-const { setClient: setNotifyClient, sendDailySummary } = require('./notify');
+const { setClient: setNotifyClient, sendDailySummary, sendError } = require('./notify');
 const { createNotionTask } = require('./shared');
 const { backupSession, restoreSession } = require('./session-backup');
 
@@ -80,6 +81,31 @@ whatsapp.on('qr', qr => {
     console.log('\n\n\n\n\n\n\n\n');
     log('Scan this QR code with WhatsApp:\n');
     qrcode.generate(qr, {small: true});
+});
+
+whatsapp.on('auth_failure', async (msg) => {
+    logErr(`🔐 WhatsApp auth failure: ${msg} — clearing session and restarting for QR scan`);
+    // Clear local session so next start shows a fresh QR
+    const sessionDir = `${PUPPETEER_SESSION_DIR}/session`;
+    try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+    // Clear GCS backup so restore doesn't re-load the revoked session
+    const bucket = process.env.SESSION_BACKUP_BUCKET;
+    if (bucket) {
+        try {
+            const { data: { access_token } } = await axios.get(
+                'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+                { headers: { 'Metadata-Flavor': 'Google' } }
+            );
+            await axios.delete(
+                `https://storage.googleapis.com/storage/v1/b/${bucket}/o/wwebjs_auth.tar.gz`,
+                { headers: { Authorization: `Bearer ${access_token}` } }
+            );
+            log('🔐 GCS session backup cleared');
+        } catch (err) {
+            logErr(`🔐 Failed to clear GCS backup: ${err.message}`);
+        }
+    }
+    process.exit(1); // Docker --restart always will bring it back, now needing QR
 });
 
 async function checkDailySummary() {
@@ -191,9 +217,15 @@ whatsapp.on('message_create', async (msg) => {
             };
         }
 
-        messageQueues[trueGroupId].messages.push(content);
+        const MAX_QUEUE_DEPTH = 200;
+        const queue = messageQueues[trueGroupId].messages;
+        if (queue.length >= MAX_QUEUE_DEPTH) {
+            queue.shift(); // drop oldest to prevent unbounded memory growth
+            log(`⚠️ [${chatName}] Queue at ${MAX_QUEUE_DEPTH} — dropped oldest message`);
+        }
+        queue.push(content);
         const preview = content.slice(0, 80).replace(/\n/g, ' ');
-        const queueLen = messageQueues[trueGroupId].messages.length;
+        const queueLen = queue.length;
         log(`📥 [${chatName}] Message #${queueLen} from ${sender}: "${preview}${content.length > 80 ? '...' : ''}"`);
     } catch (err) {
         logErr(`⚠️ Error handling message: ${err.message}`);
@@ -422,6 +454,7 @@ async function shutdown(signal) {
     log(`🛑 Received ${signal}, shutting down gracefully...`);
     whatsappState = 'shutting_down';
     saveMashovSession();
+    await backupSession();
     try {
         await whatsapp.destroy();
         log('🛑 WhatsApp client destroyed');
@@ -433,6 +466,14 @@ async function shutdown(signal) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('uncaughtException', (err) => {
+    logErr(`💥 Uncaught exception: ${err.message}\n${err.stack}`);
+    shutdown('uncaughtException');
+});
+process.on('unhandledRejection', (reason) => {
+    logErr(`💥 Unhandled rejection: ${reason instanceof Error ? reason.stack : reason}`);
+    shutdown('unhandledRejection');
+});
 
 // --- OOM Watchdog ---
 // If heap exceeds 220MB (V8 is capped at 256MB), trigger a graceful shutdown
@@ -464,7 +505,11 @@ async function initializeWhatsApp(attempt = 1, maxAttempts = 5, isReconnect = fa
             log(`🔄 Retrying in ${delay / 1000}s...`);
             setTimeout(() => initializeWhatsApp(attempt + 1, maxAttempts, isReconnect), delay);
         } else {
-            logErr('❌ WhatsApp initialization failed after all retries — QR scan required');
+            logErr('❌ WhatsApp initialization failed after all retries — will retry in 5 minutes');
+            sendError('WhatsApp failed to reconnect after 5 attempts — retrying in 5 minutes').catch(() => {});
+            setTimeout(() => {
+                if (!isShuttingDown) initializeWhatsApp(1, maxAttempts, isReconnect);
+            }, 5 * 60 * 1000);
         }
     }
 }

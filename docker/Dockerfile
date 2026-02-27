@@ -30,4 +30,8 @@ RUN npx puppeteer browsers install chrome
 COPY --chown=node:node listener.js processor.js shared.js mashov.js notify.js session-backup.js entrypoint.sh package.json ./
 RUN chmod +x ./entrypoint.sh
 
+# Restart container if health endpoint stops responding (3 failures = ~90s)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD wget -qO- http://localhost:8080/health || exit 1
+
 ENTRYPOINT [ "./entrypoint.sh" ]
