@@ -469,6 +469,84 @@ const healthServer = http.createServer((req, res) => {
         const qrJson = JSON.stringify(latestQr);
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="15"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sylphrena QR</title><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;background:#f5f5f5;}h2{color:#333;margin-bottom:16px;}p{color:#888;font-size:13px;margin-top:16px;}</style></head><body><h2>Scan with WhatsApp</h2><div id="qr"></div><p>Auto-refreshes every 15 seconds</p><script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script><script>new QRCode(document.getElementById('qr'),{text:${qrJson},width:256,height:256});</script></body></html>`);
+    } else if (req.method === 'GET' && req.url.startsWith('/action')) {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        if (params.get('token') !== QR_TOKEN) {
+            res.writeHead(401, { 'Content-Type': 'text/plain' });
+            res.end('Unauthorized');
+            return;
+        }
+        const cmd = params.get('cmd');
+        const respond = (ok, message) => {
+            res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok, cmd, message }));
+        };
+        const adminNumber = process.env.ERROR_NUMBER || '';
+
+        if (cmd === 'restart_wa') {
+            respond(true, 'Restarting WhatsApp client — session on disk, no QR needed');
+            setTimeout(async () => {
+                log('🔄 /action: restart_wa triggered');
+                try { await whatsapp.destroy(); } catch {}
+                initializeWhatsApp(1, 5, true);
+            }, 300);
+        } else if (cmd === 'restart') {
+            respond(true, 'Restarting container — session volume preserved, no QR needed');
+            setTimeout(() => {
+                log('🔄 /action: restart triggered — exiting with code 1 for Docker restart');
+                process.exit(1);
+            }, 500);
+        } else if (cmd === 'send_status') {
+            if (!adminNumber) { respond(false, 'ERROR_NUMBER not configured'); return; }
+            respond(true, 'Sending status to admin WhatsApp');
+            setImmediate(async () => {
+                const uptimeSec = Math.floor(process.uptime());
+                const mem = process.memoryUsage();
+                const heapMB = Math.round(mem.heapUsed / 1024 / 1024);
+                const rssMB = Math.round(mem.rss / 1024 / 1024);
+                let queueDepth = 0;
+                for (const g in messageQueues) queueDepth += messageQueues[g].messages.length;
+                const text = [
+                    `📊 Sylphrena Status`,
+                    `Version: ${process.env.APP_VERSION || 'unknown'}`,
+                    `Uptime: ${Math.floor(uptimeSec / 60)}m ${uptimeSec % 60}s`,
+                    `WhatsApp: ${whatsappState}`,
+                    `Mashov: ${timeSince(lastMashovPoll) ? `last ${timeSince(lastMashovPoll)}` : 'never polled'}`,
+                    `Queue: ${queueDepth} msg(s)`,
+                    `Memory: ${heapMB}MB heap / ${rssMB}MB RSS`,
+                    `Processor fails: ${processorConsecutiveFails}`,
+                ].join('\n');
+                try {
+                    await whatsapp.sendMessage(`${adminNumber}@c.us`, text);
+                    log(`📲 /action: send_status sent to ${adminNumber}`);
+                } catch (err) {
+                    logErr(`📲 /action: send_status failed: ${err.message}`);
+                }
+            });
+        } else if (cmd === 'poll_mashov') {
+            if (!process.env.MASHOV_USERNAME) { respond(false, 'Mashov not configured'); return; }
+            respond(true, 'Triggering immediate Mashov poll');
+            setImmediate(() => {
+                log('🏫 /action: poll_mashov triggered');
+                pollMashov(mashovComplete).catch(err => logErr(`🏫 /action: poll_mashov failed: ${err.message}`));
+            });
+        } else if (cmd === 'backup_session') {
+            respond(true, 'Triggering immediate GCS session backup');
+            setImmediate(() => {
+                log('💾 /action: backup_session triggered');
+                backupSession().catch(err => logErr(`💾 /action: backup_session failed: ${err.message}`));
+            });
+        } else if (cmd === 'clear_queue') {
+            let total = 0;
+            for (const g in messageQueues) {
+                total += messageQueues[g].messages.length;
+                messageQueues[g].messages = [];
+            }
+            log(`🗑️ /action: clear_queue dropped ${total} message(s)`);
+            respond(true, `Cleared ${total} queued message(s)`);
+        } else {
+            respond(false, `Unknown command: "${cmd}". Valid: restart_wa, restart, send_status, poll_mashov, backup_session, clear_queue`);
+        }
     } else {
         res.writeHead(404);
         res.end();
