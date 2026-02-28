@@ -24,6 +24,7 @@ class MashovClient {
         this.csrfToken = null;
         this.cookies = null;
         this.authToken = null;
+        this.devicePass = null; // returned by /login, used by /loginDevice to re-auth without "new device" email
         this.userId = null;
         this.children = [];
         this._loginPromise = null; // mutex: prevents concurrent logins
@@ -66,10 +67,11 @@ class MashovClient {
             this.csrfToken = data.csrfToken;
             this.cookies = data.cookies;
             this.authToken = data.authToken || null;
+            this.devicePass = data.devicePass || null;
             this.userId = data.userId;
             this.children = data.children || [];
             this.loggedIn = true;
-            log(`🏫 Mashov session restored from disk (jwt=${this.authToken ? 'present' : 'missing'})`);
+            log(`🏫 Mashov session restored from disk (jwt=${this.authToken ? 'present' : 'missing'}, devicePass=${this.devicePass ? 'present' : 'missing'})`);
             this._logJwtExpiry('Session restore');
         } catch (err) {
             if (err.code !== 'ENOENT') {
@@ -88,6 +90,7 @@ class MashovClient {
                 csrfToken: this.csrfToken,
                 cookies: this.cookies,
                 authToken: this.authToken,
+                devicePass: this.devicePass,
                 userId: this.userId,
                 children: this.children
             }));
@@ -105,12 +108,24 @@ class MashovClient {
             log('🏫 Login already in progress, waiting...');
             return this._loginPromise;
         }
-        this._loginPromise = this._doLogin();
+        this._loginPromise = this._doLoginWithFallback();
         try {
             return await this._loginPromise;
         } finally {
             this._loginPromise = null;
         }
+    }
+
+    async _doLoginWithFallback() {
+        // Try silent re-auth first — no "new device" email
+        if (this.devicePass) {
+            try {
+                return await this._doLoginDevice();
+            } catch (err) {
+                log(`🏫 loginDevice failed (${err.response?.status ?? err.message}) — falling back to full login`);
+            }
+        }
+        return this._doLogin();
     }
 
     async _doLogin() {
@@ -136,13 +151,7 @@ class MashovClient {
             }
         });
 
-        this.csrfToken = res.headers['x-csrf-token'];
-        const setCookies = res.headers['set-cookie'] || [];
-        this.cookies = setCookies.map(c => c.split(';')[0]).join('; ');
-
-        // Extract the long-lived JWT for persistent auth
-        const authCookie = setCookies.find(c => c.startsWith('MashovAuthToken='));
-        this.authToken = authCookie ? authCookie.split(';')[0].split('=').slice(1).join('=') : null;
+        this._extractSession(res);
 
         const data = res.data;
         this.userId = data.credential.userId;
@@ -151,8 +160,58 @@ class MashovClient {
 
         this._saveSession();
 
-        log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}, jwt=${this.authToken ? 'present' : 'missing'}`);
+        log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}, jwt=${this.authToken ? 'present' : 'missing'}, devicePass=${this.devicePass ? 'present' : 'missing'}`);
         this._logJwtExpiry('Post-login');
+        return data;
+    }
+
+    // Shared response parsing for /login and /loginDevice
+    _extractSession(res) {
+        this.csrfToken = res.headers['x-csrf-token'];
+        const setCookies = res.headers['set-cookie'] || [];
+        this.cookies = setCookies.map(c => c.split(';')[0]).join('; ');
+
+        const authCookie = setCookies.find(c => c.startsWith('MashovAuthToken='));
+        this.authToken = authCookie ? authCookie.split(';')[0].split('=').slice(1).join('=') : null;
+
+        // devicePass is returned as a response header — save it for future silent re-auth
+        const dp = res.headers['devicepass'];
+        if (dp && dp.length > 0) {
+            try { this.devicePass = JSON.parse(dp); } catch { this.devicePass = dp; }
+        }
+    }
+
+    async _doLoginDevice() {
+        log(`🏫 Attempting silent re-auth via /loginDevice (no "new device" email)...`);
+        const res = await axios.post(`${BASE_URL}/loginDevice`, {
+            semel: this.semel,
+            year: this.year,
+            appName: 'info.mashov.students',
+            apiVersion: '3.20210425',
+            appVersion: '3.20210425',
+            appBuild: '3.20210425',
+            deviceUuid: this.deviceUuid,
+            devicePlatform: 'chrome',
+            deviceManufacturer: 'win',
+            deviceModel: 'desktop',
+            deviceVersion: '120.0.0.0'
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/plain, */*',
+                'devicePass': JSON.stringify(this.devicePass)
+            }
+        });
+
+        this._extractSession(res);
+        const data = res.data;
+        if (data.credential?.userId) this.userId = data.credential.userId;
+        if (data.accessToken?.children) this.children = data.accessToken.children;
+        this.loggedIn = true;
+
+        this._saveSession();
+        log(`🏫 Silent re-auth successful — no "new device" email sent`);
+        this._logJwtExpiry('Post-loginDevice');
         return data;
     }
 
