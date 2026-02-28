@@ -10,10 +10,17 @@ const ERROR_NUMBER = process.env.ERROR_NUMBER || '';
 let client = null;
 let lastErrorSentAt = 0;
 let lastSummarySentDate = null;
+let pendingAlert = null; // buffered alert to send when WA reconnects
 
 function setClient(whatsappClient) {
     client = whatsappClient;
     log('📲 Notify module initialized with WhatsApp client');
+    if (pendingAlert) {
+        const msg = pendingAlert;
+        pendingAlert = null;
+        log('📲 Flushing buffered alert after reconnect');
+        sendWhatsApp(ERROR_NUMBER, msg).catch(() => {});
+    }
 }
 
 async function sendWhatsApp(number, text) {
@@ -38,6 +45,11 @@ async function sendError(message) {
     }
     lastErrorSentAt = now;
     const text = `⚠️ Sylphrena Error:\n${message}`;
+    if (!client) {
+        pendingAlert = text; // flush when WhatsApp reconnects via setClient()
+        log('📲 WhatsApp not ready — alert buffered for reconnect');
+        return;
+    }
     await sendWhatsApp(ERROR_NUMBER, text);
 }
 

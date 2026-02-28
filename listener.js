@@ -1,6 +1,7 @@
 require('dotenv').config();
 const http = require('http');
 const fs = require('fs');
+const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
@@ -55,9 +56,20 @@ let mashovItemsToday = 0;
 let mashovItemsTodayDate = null;
 let latestQr = null;
 
-// Token to protect the /qr endpoint — use env var for persistence across restarts
+// Token to protect the /qr endpoint — persisted to disk so it survives container restarts
 const { randomBytes } = require('crypto');
-const QR_TOKEN = process.env.QR_TOKEN || randomBytes(8).toString('hex');
+const QR_TOKEN_PATH = path.join(PUPPETEER_SESSION_DIR, 'qr_token.txt');
+function loadOrCreateQrToken() {
+    if (process.env.QR_TOKEN) return process.env.QR_TOKEN;
+    try {
+        const saved = fs.readFileSync(QR_TOKEN_PATH, 'utf8').trim();
+        if (saved) { log('🔑 QR token loaded from disk'); return saved; }
+    } catch {}
+    const token = randomBytes(8).toString('hex');
+    try { fs.writeFileSync(QR_TOKEN_PATH, token); } catch (err) { logErr(`🔑 Could not persist QR token: ${err.message}`); }
+    return token;
+}
+const QR_TOKEN = loadOrCreateQrToken();
 log(`🔑 QR endpoint token: ${QR_TOKEN}  →  /qr?token=${QR_TOKEN}`);
 
 // --- WhatsApp Client Setup ---
@@ -126,7 +138,7 @@ whatsapp.on('ready', () => {
         intervalsScheduled = true;
         log(`🕒 Job processor will be triggered every ${CHECK_INTERVAL / 1000 / 60} minutes.`);
         setInterval(triggerProcessor, CHECK_INTERVAL);
-        setInterval(backupSession, 60 * 60 * 1000);
+        setInterval(backupSession, 15 * 60 * 1000); // every 15 min — reduces session loss on hard crash
         setInterval(checkDailySummary, 15 * 60 * 1000);
         log('📲 Daily summary scheduled (checks every 15 min, sends at 18:00 Israel time)');
     }
@@ -433,7 +445,7 @@ const healthServer = http.createServer((req, res) => {
                     items_today: mashovItemsToday,
                     last_notion_write: lastNotionWrite ? timeSince(lastNotionWrite) : 'none this session',
                 },
-                processor: { ok: processorOk, queue_depth: queueDepth, detail: processorDetail },
+                processor: { ok: processorOk, queue_depth: queueDepth, detail: processorDetail, ...(processorConsecutiveFails > 0 && { consecutive_fails: processorConsecutiveFails }) },
                 notifications: { ok: true, detail: summaryDetail },
             }
         }, null, 2);
@@ -487,11 +499,11 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('uncaughtException', (err) => {
     logErr(`💥 Uncaught exception: ${err.message}\n${err.stack}`);
-    shutdown('uncaughtException');
+    process.exit(1); // exit(1) = crash, not clean stop — Docker/monitoring can distinguish
 });
 process.on('unhandledRejection', (reason) => {
     logErr(`💥 Unhandled rejection: ${reason instanceof Error ? reason.stack : reason}`);
-    shutdown('unhandledRejection');
+    process.exit(1);
 });
 
 // --- OOM Watchdog ---
