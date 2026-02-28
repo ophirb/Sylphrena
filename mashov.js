@@ -37,6 +37,28 @@ class MashovClient {
         return path.join(sessionDir, SESSION_FILENAME);
     }
 
+    _decodeJwtExpiry(token) {
+        try {
+            const payload = JSON.parse(
+                Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()
+            );
+            return payload.exp || null; // Unix timestamp (seconds)
+        } catch { return null; }
+    }
+
+    _logJwtExpiry(label) {
+        if (!this.authToken) return;
+        const exp = this._decodeJwtExpiry(this.authToken);
+        if (!exp) { log(`🏫 ${label}: JWT present but has no exp claim`); return; }
+        const expiresIn = Math.round((exp * 1000 - Date.now()) / 1000 / 60);
+        const expiresAt = new Date(exp * 1000).toISOString();
+        if (expiresIn > 0) {
+            log(`🏫 ${label}: JWT expires at ${expiresAt} (in ${expiresIn} min)`);
+        } else {
+            log(`🏫 ${label}: JWT already expired at ${expiresAt} (${Math.abs(expiresIn)} min ago)`);
+        }
+    }
+
     _loadSession() {
         const sessionPath = this._getSessionPath();
         try {
@@ -48,6 +70,7 @@ class MashovClient {
             this.children = data.children || [];
             this.loggedIn = true;
             log(`🏫 Mashov session restored from disk (jwt=${this.authToken ? 'present' : 'missing'})`);
+            this._logJwtExpiry('Session restore');
         } catch (err) {
             if (err.code !== 'ENOENT') {
                 logErr(`🏫 Failed to load session (will re-login): ${err.message}`);
@@ -91,6 +114,7 @@ class MashovClient {
     }
 
     async _doLogin() {
+        log(`🏫 ⚠️ Full login triggered at ${new Date().toISOString()} — this sends a "new device" email`);
         const res = await axios.post(`${BASE_URL}/login`, {
             semel: this.semel,
             year: this.year,
@@ -128,6 +152,7 @@ class MashovClient {
         this._saveSession();
 
         log(`🏫 Mashov login successful. userId=${this.userId}, children=${this.children.length}, jwt=${this.authToken ? 'present' : 'missing'}`);
+        this._logJwtExpiry('Post-login');
         return data;
     }
 
@@ -166,6 +191,8 @@ class MashovClient {
                         log('🏫 Heartbeat: JWT re-auth failed, will re-login on next poll');
                     }
                 }
+                log(`🏫 ⚠️ Heartbeat: session fully expired at ${new Date().toISOString()} — full login on next poll`);
+                this._logJwtExpiry('Heartbeat expiry');
                 this.loggedIn = false;
             } else {
                 logErr(`🏫 Heartbeat failed: ${err.message}`);
@@ -206,6 +233,7 @@ class MashovClient {
             if (newToken !== this.authToken) {
                 this.authToken = newToken;
                 log('🏫 JWT refreshed from API response');
+                this._logJwtExpiry('After API refresh');
                 this._saveSession();
             }
         }
