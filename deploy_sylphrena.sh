@@ -97,8 +97,12 @@ EOF
 
   gcloud compute scp /tmp/syl_update.sh "${VM_NAME}:/tmp/syl_update.sh" \
     --zone="${ZONE}" --project="${GCP_PROJECT_ID}"
-  gcloud compute ssh "${VM_NAME}" --zone="${ZONE}" --project="${GCP_PROJECT_ID}" \
-    --command="sudo bash /tmp/syl_update.sh"
+  if ! gcloud compute ssh "${VM_NAME}" --zone="${ZONE}" --project="${GCP_PROJECT_ID}" \
+    --command="sudo bash /tmp/syl_update.sh"; then
+    echo "❌ Hot-swap failed — VM script exited with error (see above). Container NOT updated."
+    rm -f /tmp/syl_update.sh
+    return 1
+  fi
   rm -f /tmp/syl_update.sh
 
   echo ""
