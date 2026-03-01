@@ -229,6 +229,19 @@ class MashovClient {
             });
             this._updateCookiesFromResponse(res);
             log('🏫 Mashov heartbeat OK — session alive');
+
+            // Proactively re-auth before JWT expires so loginDevice can run while
+            // the session is still active (it fails once the session is already dead)
+            if (this.authToken && this.devicePass) {
+                const exp = this._decodeJwtExpiry(this.authToken);
+                if (exp) {
+                    const minutesLeft = Math.round((exp * 1000 - Date.now()) / 1000 / 60);
+                    if (minutesLeft < 60) {
+                        log(`🏫 Heartbeat: JWT expires in ${minutesLeft}m — proactively re-authing via loginDevice`);
+                        await this.login(); // devicePass present + session alive → loginDevice → no email
+                    }
+                }
+            }
         } catch (err) {
             if (err.response?.status === 401) {
                 // Server-side session expired — try JWT re-auth to silently
